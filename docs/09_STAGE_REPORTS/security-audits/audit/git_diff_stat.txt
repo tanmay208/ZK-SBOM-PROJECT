@@ -1,0 +1,147 @@
+ .dockerignore                                      |    46 +
+ .env.example                                       |    14 +
+ .gitignore                                         |    50 +
+ README.md                                          |    14 +
+ backend/alembic.ini                                |    39 +
+ backend/alembic/env.py                             |   104 +
+ backend/alembic/script.py.mako                     |    25 +
+ backend/alembic/versions/001_initial_schema.py     |   244 +
+ backend/policy_service/Dockerfile                  |    26 +
+ backend/policy_service/app/__init__.py             |     0
+ backend/policy_service/app/api/routes/__init__.py  |     0
+ backend/policy_service/app/core/__init__.py        |     0
+ backend/policy_service/app/main.py                 |    23 +
+ backend/policy_service/app/models/__init__.py      |     3 +
+ backend/policy_service/app/models/policy_models.py |    53 +
+ .../policy_service/app/repositories/__init__.py    |     0
+ backend/policy_service/app/schemas/__init__.py     |     0
+ backend/policy_service/app/security/__init__.py    |     0
+ backend/policy_service/app/services/__init__.py    |     0
+ backend/policy_service/requirements.txt            |     2 +
+ backend/policy_service/tests/test_policy_health.py |    28 +
+ backend/sbom_service/Dockerfile                    |    31 +
+ backend/sbom_service/app/__init__.py               |     0
+ backend/sbom_service/app/api/routes/__init__.py    |     0
+ backend/sbom_service/app/api/routes/sbom_routes.py |   123 +
+ backend/sbom_service/app/core/__init__.py          |     0
+ backend/sbom_service/app/main.py                   |    23 +
+ backend/sbom_service/app/models/__init__.py        |     3 +
+ backend/sbom_service/app/models/sbom_models.py     |   150 +
+ backend/sbom_service/app/repositories/__init__.py  |     0
+ .../app/repositories/sbom_repository.py            |   140 +
+ backend/sbom_service/app/schemas/__init__.py       |     0
+ backend/sbom_service/app/schemas/parsed_sbom.py    |    49 +
+ backend/sbom_service/app/schemas/sbom_schemas.py   |   115 +
+ backend/sbom_service/app/security/__init__.py      |     0
+ backend/sbom_service/app/services/__init__.py      |     0
+ .../sbom_service/app/services/canonicalization.py  |   228 +
+ .../app/services/commitment_service.py             |   178 +
+ backend/sbom_service/app/services/identity.py      |   184 +
+ backend/sbom_service/app/services/parser.py        |   144 +
+ .../app/services/sbom_intake_service.py            |   146 +
+ backend/sbom_service/app/services/validator.py     |   220 +
+ backend/sbom_service/requirements.txt              |     2 +
+ .../tests/test_adversarial_identity.py             |   112 +
+ .../sbom_service/tests/test_canonicalization.py    |   390 +
+ backend/sbom_service/tests/test_failure_modes.py   |   200 +
+ backend/sbom_service/tests/test_identity.py        |   267 +
+ backend/sbom_service/tests/test_privacy_leakage.py |   135 +
+ backend/sbom_service/tests/test_sbom_health.py     |    30 +
+ backend/sbom_service/tests/test_sbom_intake.py     |   624 +
+ backend/sbom_service/tests/test_sbom_parser.py     |   202 +
+ backend/sbom_service/tests/test_sbom_validator.py  |   384 +
+ .../tests/test_security_adversarial.py             |   268 +
+ backend/scripts/init_db.py                         |    88 +
+ backend/shared/__init__.py                         |     1 +
+ backend/shared/app_factory.py                      |   133 +
+ backend/shared/config.py                           |   145 +
+ backend/shared/crypto/component_hash.py            |   104 +
+ backend/shared/crypto/field_encoding.py            |    94 +
+ backend/shared/crypto/merkle.py                    |    44 +
+ backend/shared/crypto/poseidon_bn254.py            |    90 +
+ backend/shared/crypto/poseidon_constants.py        |    37 +
+ backend/shared/database.py                         |    84 +
+ backend/shared/exceptions.py                       |   149 +
+ backend/shared/logging.py                          |    73 +
+ backend/shared/requirements.txt                    |    16 +
+ backend/shared/schemas.py                          |    19 +
+ backend/shared/security.py                         |   336 +
+ backend/shared/tests/test_adversarial_crypto.py    |   436 +
+ backend/shared/tests/test_authoritative_vectors.py |   197 +
+ backend/shared/tests/test_component_hash.py        |    18 +
+ backend/shared/tests/test_crypto_vectors.py        |    72 +
+ backend/shared/tests/test_field_encoding.py        |   102 +
+ backend/shared/tests/test_merkle.py                |    56 +
+ backend/shared/tests/test_poseidon_bn254.py        |    16 +
+ backend/shared/tests/test_purl.py                  |   166 +
+ backend/shared/tests/test_security.py              |   639 +
+ backend/shared/tests/test_shared.py                |    45 +
+ backend/shared/tests/vectors/crypto_vectors.json   |   851 +
+ backend/shared/utils/__init__.py                   |     1 +
+ backend/shared/utils/purl.py                       |   195 +
+ backend/verification_service/Dockerfile            |    26 +
+ backend/verification_service/app/__init__.py       |     0
+ .../app/api/routes/__init__.py                     |     0
+ backend/verification_service/app/core/__init__.py  |     0
+ backend/verification_service/app/main.py           |    39 +
+ .../verification_service/app/models/__init__.py    |     3 +
+ .../app/models/verification_models.py              |    71 +
+ .../app/repositories/__init__.py                   |     0
+ .../verification_service/app/schemas/__init__.py   |     0
+ .../verification_service/app/security/__init__.py  |     0
+ .../verification_service/app/services/__init__.py  |     0
+ backend/verification_service/requirements.txt      |     2 +
+ .../tests/test_verification_health.py              |    28 +
+ backend/vulnerability_service/Dockerfile           |    26 +
+ backend/vulnerability_service/app/__init__.py      |     0
+ .../app/api/routes/__init__.py                     |     0
+ backend/vulnerability_service/app/core/__init__.py |     0
+ backend/vulnerability_service/app/main.py          |    23 +
+ .../vulnerability_service/app/models/__init__.py   |    13 +
+ .../app/models/vulnerability_models.py             |   155 +
+ .../app/repositories/__init__.py                   |     0
+ .../vulnerability_service/app/schemas/__init__.py  |     0
+ .../vulnerability_service/app/security/__init__.py |     0
+ .../vulnerability_service/app/services/__init__.py |     0
+ backend/vulnerability_service/requirements.txt     |     2 +
+ .../tests/test_vulnerability_health.py             |    28 +
+ backend/zkp_service/Dockerfile                     |    26 +
+ backend/zkp_service/app/__init__.py                |     0
+ backend/zkp_service/app/api/routes/__init__.py     |     0
+ backend/zkp_service/app/core/__init__.py           |     0
+ backend/zkp_service/app/main.py                    |    23 +
+ backend/zkp_service/app/models/__init__.py         |     3 +
+ backend/zkp_service/app/models/zkp_models.py       |    56 +
+ backend/zkp_service/app/repositories/__init__.py   |     0
+ backend/zkp_service/app/schemas/__init__.py        |     0
+ backend/zkp_service/app/security/__init__.py       |     0
+ backend/zkp_service/app/services/__init__.py       |     0
+ backend/zkp_service/requirements.txt               |     2 +
+ backend/zkp_service/tests/test_zkp_health.py       |    29 +
+ docker-compose.yml                                 |   124 +
+ docker/Dockerfile.noir                             |    22 +
+ docs/CRYPTO_INTEROPERABILITY.md                    |   203 +
+ pyproject.toml                                     |     3 +
+ scripts/bn254.nr                                   |   173 +
+ scripts/consts.nr                                  | 24971 +++++++++++++++++++
+ scripts/extract_consts.py                          |    75 +
+ scripts/generate_crypto_vectors.py                 |   209 +
+ scripts/generate_noir_vector_tests.py              |   174 +
+ scripts/generate_print_main.py                     |    25 +
+ scripts/get_all_vectors.py                         |    69 +
+ scripts/get_merkle_vectors.py                      |    38 +
+ scripts/get_python_hashes.py                       |    21 +
+ scripts/mod.nr                                     |   271 +
+ scripts/noir_compatibility/Nargo.toml              |     5 +
+ scripts/noir_compatibility/src/main.nr             |   254 +
+ scripts/noir_experiment/Nargo.toml                 |     7 +
+ scripts/noir_experiment/src/main.nr                |    19 +
+ scripts/perm.nr                                    |   148 +
+ scripts/run_noir_compatibility_tests.py            |   242 +
+ scripts/size_analysis.py                           |    29 +
+ scripts/temp_merkle.py                             |    62 +
+ scripts/test_perm.py                               |    23 +
+ scripts/test_poseidon.py                           |    11 +
+ scripts/true_max_size.py                           |    48 +
+ scripts/true_valid_max_size.py                     |    28 +
+ 146 files changed, 37035 insertions(+)

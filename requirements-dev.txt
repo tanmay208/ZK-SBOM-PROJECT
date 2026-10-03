@@ -1,0 +1,4 @@
+# Runtime dependencies plus versions already used by backend tests.
+-r requirements.txt
+pytest==8.3.4
+httpx==0.28.1

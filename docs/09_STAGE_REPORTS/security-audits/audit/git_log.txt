@@ -1,0 +1,2 @@
+733fd63 docs: finalize project architecture and specifications
+59a4e6b docs: finalize project architecture and specifications

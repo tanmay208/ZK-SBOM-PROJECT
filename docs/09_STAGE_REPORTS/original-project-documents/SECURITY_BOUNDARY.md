@@ -59,3 +59,8 @@ The zero-knowledge proof itself acts as the primary cryptographic privacy bounda
 - **Logging Restrictions:** Application logs, error logs, and access logs must NEVER contain Private Data (e.g., component names, PURLs, private hashes, Merkle paths). Logs from the Verification Service must especially be sanitized to prevent leakage.
 - **Artifact Restrictions:** Proof artifacts stored and distributed must only contain the cryptographic proof and the three required public inputs. No raw or encoded representation of the SBOM may be embedded in the proof artifact metadata unless cryptographically blinded.
 - **API Responses:** API responses to unauthorized or buyer-role users must immediately strip all private fields.
+
+## 7. Network and Transit Boundary
+
+- **TLS Termination:** The system boundary correctly terminates TLS at the ingress gateway/reverse-proxy level (e.g., via a managed cloud load balancer or external Nginx proxy). 
+- **Internal Traffic:** Traffic within the Docker composition or private cluster is considered trusted and relies on the gateway for external cryptographic transit protections. The backend containers listen on unencrypted ports and rely exclusively on the ingress for TLS.

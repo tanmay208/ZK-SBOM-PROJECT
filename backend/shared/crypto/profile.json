@@ -1,0 +1,41 @@
+{
+  "active_profile": "prod",
+  "profiles": {
+    "dev": {
+      "circuit_dir": "circuits_dev",
+      "circuit_artifact_hash": "c6293324ee020f32a1fffd7303c52f88e1297c5e56a52d98dfeb6a25d171cd5d",
+      "vk_hash": "a8733e6ca6434360fac2c91a7e94d9b4ff70a74ed4a0d392d6517032afc29e75",
+      "max_components": 8,
+      "merkle_depth": 3,
+      "smt_depth": 256,
+      "nargo_version": "0.32.0",
+      "max_proof_size_bytes": 5000,
+      "proof_timeout_seconds": 300
+    },
+    "prod": {
+      "circuit_dir": "circuits",
+      "circuit_artifact_hash": "UNUSED_IN_DECOMPOSED_TOPOLOGY",
+      "vk_hash": "UNUSED_IN_DECOMPOSED_TOPOLOGY",
+      "max_components": 1024,
+      "merkle_depth": 10,
+      "smt_depth": 256,
+      "nargo_version": "0.32.0",
+      "max_proof_size_bytes": 5000,
+      "proof_timeout_seconds": 300,
+      "decomposed_artifacts": {
+        "segment_init_32": {
+          "circuit_artifact_hash": "3d529f2528d1adc77d6085e94b7da2287a3ab460159586b4add3c62c5c18e535",
+          "vk_hash": "3fa91fd9f1e797000b3f773774f697621c1b7ed3f1eebd99e4f65f2a4c3a6480"
+        },
+        "segment_mid_32": {
+          "circuit_artifact_hash": "c45a306d8f3d143577baa880356213575d9c339dd2905ccfb779b0a5f2fb9eab",
+          "vk_hash": "820a2ac24f2f5baa0a674cdb4a4b99dd011c5645fe96c3cd3b628fcbe579d247"
+        },
+        "segment_final_32": {
+          "circuit_artifact_hash": "60289dda7350161f37cfaf6b8519f07b221009b08ddd45a4f1337bf77c62fe41",
+          "vk_hash": "5faba2640b5f32d96099e1d133aa2c74402cb346db9597bcaaf301e5c2fe9910"
+        }
+      }
+    }
+  }
+}

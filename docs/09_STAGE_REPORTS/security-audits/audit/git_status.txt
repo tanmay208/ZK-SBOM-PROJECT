@@ -1,0 +1,192 @@
+ A .dockerignore
+ A .env.example
+ A .gitignore
+ A README.md
+ A backend/alembic.ini
+ A backend/alembic/env.py
+ A backend/alembic/script.py.mako
+ A backend/alembic/versions/001_initial_schema.py
+ A backend/policy_service/Dockerfile
+ A backend/policy_service/app/__init__.py
+ A backend/policy_service/app/api/routes/__init__.py
+ A backend/policy_service/app/core/__init__.py
+ A backend/policy_service/app/main.py
+ A backend/policy_service/app/models/__init__.py
+ A backend/policy_service/app/models/policy_models.py
+ A backend/policy_service/app/repositories/__init__.py
+ A backend/policy_service/app/schemas/__init__.py
+ A backend/policy_service/app/security/__init__.py
+ A backend/policy_service/app/services/__init__.py
+ A backend/policy_service/requirements.txt
+ A backend/policy_service/tests/test_policy_health.py
+ A backend/sbom_service/Dockerfile
+ A backend/sbom_service/app/__init__.py
+ A backend/sbom_service/app/api/routes/__init__.py
+ A backend/sbom_service/app/api/routes/sbom_routes.py
+ A backend/sbom_service/app/core/__init__.py
+ A backend/sbom_service/app/main.py
+ A backend/sbom_service/app/models/__init__.py
+ A backend/sbom_service/app/models/sbom_models.py
+ A backend/sbom_service/app/repositories/__init__.py
+ A backend/sbom_service/app/repositories/sbom_repository.py
+ A backend/sbom_service/app/schemas/__init__.py
+ A backend/sbom_service/app/schemas/parsed_sbom.py
+ A backend/sbom_service/app/schemas/sbom_schemas.py
+ A backend/sbom_service/app/security/__init__.py
+ A backend/sbom_service/app/services/__init__.py
+ A backend/sbom_service/app/services/canonicalization.py
+ A backend/sbom_service/app/services/commitment_service.py
+ A backend/sbom_service/app/services/identity.py
+ A backend/sbom_service/app/services/parser.py
+ A backend/sbom_service/app/services/sbom_intake_service.py
+ A backend/sbom_service/app/services/validator.py
+ A backend/sbom_service/requirements.txt
+ A backend/sbom_service/tests/test_adversarial_identity.py
+ A backend/sbom_service/tests/test_canonicalization.py
+ A backend/sbom_service/tests/test_failure_modes.py
+ A backend/sbom_service/tests/test_identity.py
+ A backend/sbom_service/tests/test_privacy_leakage.py
+ A backend/sbom_service/tests/test_sbom_health.py
+ A backend/sbom_service/tests/test_sbom_intake.py
+ A backend/sbom_service/tests/test_sbom_parser.py
+ A backend/sbom_service/tests/test_sbom_validator.py
+ A backend/sbom_service/tests/test_security_adversarial.py
+ A backend/scripts/init_db.py
+ A backend/shared/__init__.py
+ A backend/shared/app_factory.py
+ A backend/shared/config.py
+ A backend/shared/crypto/component_hash.py
+ A backend/shared/crypto/field_encoding.py
+ A backend/shared/crypto/merkle.py
+ A backend/shared/crypto/poseidon_bn254.py
+ A backend/shared/crypto/poseidon_constants.py
+ A backend/shared/database.py
+ A backend/shared/exceptions.py
+ A backend/shared/logging.py
+ A backend/shared/requirements.txt
+ A backend/shared/schemas.py
+ A backend/shared/security.py
+ A backend/shared/tests/test_adversarial_crypto.py
+ A backend/shared/tests/test_authoritative_vectors.py
+ A backend/shared/tests/test_component_hash.py
+ A backend/shared/tests/test_crypto_vectors.py
+ A backend/shared/tests/test_field_encoding.py
+ A backend/shared/tests/test_merkle.py
+ A backend/shared/tests/test_poseidon_bn254.py
+ A backend/shared/tests/test_purl.py
+ A backend/shared/tests/test_security.py
+ A backend/shared/tests/test_shared.py
+ A backend/shared/tests/vectors/crypto_vectors.json
+ A backend/shared/utils/__init__.py
+ A backend/shared/utils/purl.py
+ A backend/verification_service/Dockerfile
+ A backend/verification_service/app/__init__.py
+ A backend/verification_service/app/api/routes/__init__.py
+ A backend/verification_service/app/core/__init__.py
+ A backend/verification_service/app/main.py
+ A backend/verification_service/app/models/__init__.py
+ A backend/verification_service/app/models/verification_models.py
+ A backend/verification_service/app/repositories/__init__.py
+ A backend/verification_service/app/schemas/__init__.py
+ A backend/verification_service/app/security/__init__.py
+ A backend/verification_service/app/services/__init__.py
+ A backend/verification_service/requirements.txt
+ A backend/verification_service/tests/test_verification_health.py
+ A backend/vulnerability_service/Dockerfile
+ A backend/vulnerability_service/app/__init__.py
+ A backend/vulnerability_service/app/api/routes/__init__.py
+ A backend/vulnerability_service/app/core/__init__.py
+ A backend/vulnerability_service/app/main.py
+ A backend/vulnerability_service/app/models/__init__.py
+ A backend/vulnerability_service/app/models/vulnerability_models.py
+ A backend/vulnerability_service/app/repositories/__init__.py
+ A backend/vulnerability_service/app/schemas/__init__.py
+ A backend/vulnerability_service/app/security/__init__.py
+ A backend/vulnerability_service/app/services/__init__.py
+ A backend/vulnerability_service/requirements.txt
+ A backend/vulnerability_service/tests/test_vulnerability_health.py
+ A backend/zkp_service/Dockerfile
+ A backend/zkp_service/app/__init__.py
+ A backend/zkp_service/app/api/routes/__init__.py
+ A backend/zkp_service/app/core/__init__.py
+ A backend/zkp_service/app/main.py
+ A backend/zkp_service/app/models/__init__.py
+ A backend/zkp_service/app/models/zkp_models.py
+ A backend/zkp_service/app/repositories/__init__.py
+ A backend/zkp_service/app/schemas/__init__.py
+ A backend/zkp_service/app/security/__init__.py
+ A backend/zkp_service/app/services/__init__.py
+ A backend/zkp_service/requirements.txt
+ A backend/zkp_service/tests/test_zkp_health.py
+ A docker-compose.yml
+ A docker/Dockerfile.noir
+ A docs/CRYPTO_INTEROPERABILITY.md
+ A pyproject.toml
+ A scripts/bn254.nr
+ A scripts/consts.nr
+ A scripts/extract_consts.py
+ A scripts/generate_crypto_vectors.py
+ A scripts/generate_noir_vector_tests.py
+ A scripts/generate_print_main.py
+ A scripts/get_all_vectors.py
+ A scripts/get_merkle_vectors.py
+ A scripts/get_python_hashes.py
+ A scripts/mod.nr
+ A scripts/noir_compatibility/Nargo.toml
+ A scripts/noir_compatibility/src/main.nr
+ A scripts/noir_experiment/Nargo.toml
+ A scripts/noir_experiment/src/main.nr
+ A scripts/perm.nr
+ A scripts/run_noir_compatibility_tests.py
+ A scripts/size_analysis.py
+ A scripts/temp_merkle.py
+ A scripts/test_perm.py
+ A scripts/test_poseidon.py
+ A scripts/true_max_size.py
+ A scripts/true_valid_max_size.py
+?? .bin/
+?? backend/policy_service/app/api/routes/policy_routes.py
+?? backend/policy_service/app/schemas/policy_schemas.py
+?? backend/policy_service/app/services/policy_service.py
+?? backend/sbom_service/tests/test_f008_real.py
+?? backend/sbom_service/tests/test_intake_api_privacy.py
+?? backend/sbom_service/tests/test_sbom_tenant_isolation.py
+?? backend/shared/api/
+?? backend/shared/auth.py
+?? backend/shared/crypto/config.py
+?? backend/shared/crypto/profile.json
+?? backend/shared/crypto/smt.py
+?? backend/shared/models/
+?? backend/shared/tests/test_component_hash_compatibility.py
+?? backend/shared/tests/test_crypto_profile.py
+?? backend/shared/tests/test_smt.py
+?? backend/shared/tests/test_stage3_security.py
+?? backend/verification_service/app/api/routes/verification_routes.py
+?? backend/verification_service/app/core/verifier.py
+?? backend/verification_service/app/repositories/verification_repository.py
+?? backend/verification_service/app/schemas/verification_schemas.py
+?? backend/verification_service/app/services/verification_service.py
+?? backend/verification_service/tests/test_verification_api.py
+?? backend/verification_service/tests/test_verification_service.py
+?? backend/vulnerability_service/app/api/routes/vulnerability_routes.py
+?? backend/vulnerability_service/app/schemas/vulnerability_schemas.py
+?? backend/vulnerability_service/app/services/vulnerability_service.py
+?? backend/vulnerability_service/tests/test_cvss.py
+?? backend/vulnerability_service/tests/test_vulnerability_ingestion.py
+?? backend/zkp_service/app/api/routes/zkp_routes.py
+?? backend/zkp_service/app/repositories/zkp_repository.py
+?? backend/zkp_service/app/schemas/zkp_schemas.py
+?? backend/zkp_service/app/services/prover_service.py
+?? backend/zkp_service/tests/test_prover_service.py
+?? backend/zkp_service/tests/test_tenant_isolation.py
+?? backend/zkp_service/tests/test_zkp_api.py
+?? circuits/
+?? circuits_dev/
+?? docs/MILESTONE_FREEZE_DAY_9.md
+?? docs/security/
+?? fix_tests.py
+?? frontend/
+?? rustup-init.exe
+?? scripts/test_main_circuit.py
+?? test_asgi.py
+?? test_f008_real.py

@@ -1,0 +1,3 @@
+# Canonical project runtime dependencies: backend services plus Alembic env support.
+-r backend/shared/requirements.txt
+python-dotenv==1.2.3

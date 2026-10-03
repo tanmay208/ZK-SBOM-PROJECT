@@ -1,0 +1,2 @@
+# ZKP Service dependencies
+-r ../shared/requirements.txt
