@@ -36,10 +36,10 @@ from __future__ import annotations
 
 import logging
 
+from uuid import UUID
 from typing import List
-
-from fastapi import APIRouter, Depends, Query, status, Request
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, Query as FastAPIQuery, status, Request
+from sqlalchemy.orm import Session, Query, joinedload
 from pydantic import ValidationError
 
 from shared.database import get_session
@@ -61,20 +61,58 @@ router = APIRouter(prefix="/api/v1/sbom", tags=["sbom"])
     summary="List all SBOMs",
 )
 def list_sboms(
-    skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=50, ge=1, le=100),
+    skip: int = FastAPIQuery(default=0, ge=0),
+    limit: int = FastAPIQuery(default=50, ge=1, le=100),
+    all_tenants: bool = FastAPIQuery(default=False, description="Admin-only: list SBOMs across all tenants"),
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
+    if all_tenants and current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators may list SBOMs across all tenants",
+        )
+
+    query = session.query(SBOMUpload)
+    if isinstance(query, Query):
+        query = query.options(joinedload(SBOMUpload.application))
+    if not (all_tenants and current_user.role == "admin"):
+        query = query.filter(SBOMUpload.user_id == current_user.id)
+
     uploads = (
-        session.query(SBOMUpload)
-        .filter(SBOMUpload.user_id == current_user.id)
+        query
         .order_by(SBOMUpload.created_at.desc())
         .offset(skip)
         .limit(limit)
         .all()
     )
     return [SBOMUploadResponse.from_model(u) for u in uploads]
+
+
+@router.get(
+    "/{upload_id}",
+    response_model=SBOMUploadResponse,
+    summary="Get SBOM upload details",
+)
+def get_sbom(
+    upload_id: UUID,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    query = session.query(SBOMUpload)
+    if isinstance(query, Query):
+        query = query.options(joinedload(SBOMUpload.application))
+    upload = query.filter(SBOMUpload.id == upload_id).first()
+    if not upload:
+        raise HTTPException(status_code=404, detail="SBOM not found")
+
+    is_admin = (current_user.role == "admin")
+    if not is_admin and upload.user_id != current_user.id:
+        # Non-disclosure convention: return 404 for cross-tenant access to prevent enumeration
+        raise HTTPException(status_code=404, detail="SBOM not found")
+
+    return SBOMUploadResponse.from_model(upload)
+
 
 @router.post(
     "/upload",
@@ -150,7 +188,13 @@ async def upload_sbom(
         content_val = form.get("content")
         if content_val is not None:
             if hasattr(content_val, "read"):
-                data["content"] = (await content_val.read()).decode("utf-8")
+                try:
+                    data["content"] = (await content_val.read()).decode("utf-8")
+                except UnicodeDecodeError:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Uploaded SBOM file must be valid UTF-8 text",
+                    )
             else:
                 data["content"] = content_val
                 
@@ -160,7 +204,6 @@ async def upload_sbom(
             from fastapi.exceptions import RequestValidationError
             raise RequestValidationError(e.errors())
     else:
-        from fastapi import HTTPException
         raise HTTPException(status_code=415, detail="Unsupported media type")
 
     service = SBOMIntakeService(session)
@@ -172,4 +215,8 @@ async def upload_sbom(
         content=req_data.content,
         user_id=current_user.id,
     )
-    return SBOMUploadResponse.from_model(upload)
+    return SBOMUploadResponse.from_model(
+        upload,
+        application_name=req_data.application_name,
+        vendor=req_data.vendor,
+    )

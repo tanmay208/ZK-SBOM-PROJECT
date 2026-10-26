@@ -108,7 +108,7 @@ def create_app(
         allow_origins=allowed_origins,
         # The session contract uses an Authorization header, not cookies.
         allow_credentials=False,
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
     app.add_middleware(SecurityHeadersMiddleware)

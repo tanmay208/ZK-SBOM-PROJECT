@@ -146,7 +146,8 @@ def run_concurrent_requests() -> None:
                     id=snapshot_id,
                     snapshot_label=f"Stage21N {snapshot_id.hex}",
                     provisional_smt_root=vuln_root,
-                    status="approved",
+                    authoritative_smt_root=vuln_root,
+                    status="frozen",
                 )
             )
             db.add(

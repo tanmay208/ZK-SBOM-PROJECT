@@ -15,7 +15,7 @@ import { NAVIGATION_CONFIG } from "@/config/navigation";
 export function AppBreadcrumbs() {
   const pathname = usePathname();
   
-  if (pathname === "/") return null; // Don't show breadcrumbs on dashboard
+  if (pathname === "/" || pathname === "/dashboard") return null;
 
   const paths = pathname.split("/").filter(Boolean);
   
@@ -23,7 +23,7 @@ export function AppBreadcrumbs() {
     <Breadcrumb className="hidden md:flex mb-4">
       <BreadcrumbList>
         <BreadcrumbItem>
-          <BreadcrumbLink href="/">Dashboard</BreadcrumbLink>
+          <BreadcrumbLink href="/dashboard">Dashboard</BreadcrumbLink>
         </BreadcrumbItem>
         {paths.map((path, index) => {
           const href = `/${paths.slice(0, index + 1).join("/")}`;

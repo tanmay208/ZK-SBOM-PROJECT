@@ -54,6 +54,8 @@ PRIVATE_DATA_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"raw_sbom", re.IGNORECASE),              # raw SBOM content
     re.compile(r"dependency_graph", re.IGNORECASE),      # dep graphs
     re.compile(r"component_hash\"?\s*:\s*\"[0-9a-f]{32,}", re.IGNORECASE),
+    re.compile(r"Bearer\s+[A-Za-z0-9_\-\.]+", re.IGNORECASE),  # Authorization Bearer tokens
+    re.compile(r"eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]+"),  # JWT-shaped tokens
 ]
 
 # Additional keywords that must never appear in buyer-side responses
@@ -132,13 +134,21 @@ class SecurityAwareFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if record.msg and isinstance(record.msg, str):
             record.msg = sanitize_log_message(record.msg)
-        # Also sanitise args if they are strings
+        # Also sanitise args if they are strings or structured containers
         if record.args:
             if isinstance(record.args, dict):
-                record.args = {
-                    k: sanitize_log_message(str(v)) if isinstance(v, str) else v
-                    for k, v in record.args.items()
-                }
+                sanitized_dict = {}
+                for k, v in record.args.items():
+                    k_str = str(k).lower()
+                    if k_str in PRIVATE_FIELD_NAMES or any(
+                        s in k_str for s in ("password", "secret", "token", "certificate_data")
+                    ):
+                        sanitized_dict[k] = _REDACTED
+                    elif isinstance(v, str):
+                        sanitized_dict[k] = sanitize_log_message(v)
+                    else:
+                        sanitized_dict[k] = v
+                record.args = sanitized_dict
             elif isinstance(record.args, tuple):
                 record.args = tuple(
                     sanitize_log_message(str(a)) if isinstance(a, str) else a
@@ -333,4 +343,100 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-XSS-Protection"] = "0"
         response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
         return response
+
+
+# ---------------------------------------------------------------------------
+# §5 — Application-Layer Rate Limiting (Stage G3)
+# ---------------------------------------------------------------------------
+
+import os
+import time
+import threading
+from collections import defaultdict, deque
+from fastapi import HTTPException, status
+
+
+class RateLimiter:
+    """
+    Thread-safe, sliding-window in-memory rate limiter with Retry-After calculation.
+
+    Architectural boundary disclosure (Stage G3):
+    In single-process execution (and test fixtures), this provides strict in-process
+    rate limiting. In a multi-worker distributed container deployment, a distributed
+    shared state backend (e.g. Redis) or reverse-proxy throttling (e.g. Nginx limit_req)
+    is the required deployment prerequisite.
+    """
+
+    def __init__(self, max_requests: int, window_seconds: int, scope: str = "default"):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.scope = scope
+        self._history = defaultdict(deque)
+        self._lock = threading.Lock()
+
+    def get_client_identifier(self, request: Request, user_id: str | None = None) -> str:
+        """
+        Derive client identifier safely:
+        - If user_id is provided (authenticated routes), key on user_id.
+        - For unauthenticated routes, use request.client.host.
+        - Do NOT blindly trust arbitrary client-supplied forwarding headers unless
+          the direct peer IP is explicitly configured in TRUSTED_PROXIES.
+        """
+        if user_id:
+            return f"user:{user_id}"
+
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        trusted_proxies_raw = os.environ.get("TRUSTED_PROXIES", "")
+        if trusted_proxies_raw:
+            trusted_proxies = {p.strip() for p in trusted_proxies_raw.split(",") if p.strip()}
+            if client_ip in trusted_proxies:
+                forwarded_for = request.headers.get("X-Forwarded-For")
+                if forwarded_for:
+                    client_ip = forwarded_for.split(",")[0].strip()
+        return f"ip:{client_ip}"
+
+    def check(self, request: Request, user_id: str | None = None) -> None:
+        """
+        Evaluate rate limit against the client identifier.
+        Raises HTTPException(429) with Retry-After header if limit exceeded.
+        """
+        if os.environ.get("DISABLE_RATE_LIMITS", "false").lower() == "true":
+            return
+
+        identifier = self.get_client_identifier(request, user_id=user_id)
+        now = time.time()
+        key = f"{self.scope}:{identifier}"
+
+        with self._lock:
+            queue = self._history[key]
+            cutoff = now - self.window_seconds
+            while queue and queue[0] <= cutoff:
+                queue.popleft()
+
+            if len(queue) >= self.max_requests:
+                oldest_in_window = queue[0]
+                retry_after = max(1, int(oldest_in_window + self.window_seconds - now))
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Rate limit exceeded. Try again in {retry_after} seconds.",
+                    headers={"Retry-After": str(retry_after)},
+                )
+
+            queue.append(now)
+
+    def reset(self, identifier: str | None = None) -> None:
+        """Reset history for testing or manual recovery."""
+        with self._lock:
+            if identifier is None:
+                self._history.clear()
+            else:
+                self._history.pop(f"{self.scope}:{identifier}", None)
+
+
+# Pre-configured scoped rate limiters
+login_rate_limiter = RateLimiter(max_requests=10, window_seconds=60, scope="auth_login")
+register_rate_limiter = RateLimiter(max_requests=10, window_seconds=60, scope="auth_register")
+zkp_generate_rate_limiter = RateLimiter(max_requests=10, window_seconds=60, scope="zkp_generate")
+

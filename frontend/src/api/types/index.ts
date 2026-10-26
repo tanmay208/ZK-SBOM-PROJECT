@@ -1,8 +1,20 @@
-// AUTH
+// AUTH & ROLES (Roadmap V3 Stage G2: Consolidated 3-role primary model)
+export type PrimaryRole = "vendor" | "buyer" | "admin";
+export type LegacyRole = "auditor" | "trusted_importer";
+export type Role = PrimaryRole | LegacyRole;
+
 export interface User {
   id: string;
   username: string;
-  role: "vendor" | "admin" | "auditor";
+  role: Role;
+  is_active?: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface PasswordChangeRequest {
+  current_password: string;
+  new_password: string;
 }
 
 export interface AuthResponse {
@@ -10,12 +22,78 @@ export interface AuthResponse {
   token_type: string;
 }
 
+// ADMIN USER MANAGEMENT
+export interface AdminUser {
+  id: string;
+  username: string;
+  role: Role;
+  is_active: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface UserRoleUpdateRequest {
+  role: Role;
+}
+
+export interface UserStatusUpdateRequest {
+  is_active: boolean;
+}
+
+export interface AdminUserFilterParams {
+  skip?: number;
+  limit?: number;
+  role?: Role;
+  is_active?: boolean;
+}
+
 // METRICS
+export interface BackendMetricsResponse {
+  total_sboms: number;
+  total_jobs: number;
+  total_certificates: number;
+  total_verifications: number;
+}
+
 export interface DashboardMetrics {
-  sbom_count: number;
-  proof_count: number;
-  verification_count: number;
-  certificate_count: number;
+  total_sboms: number;
+  total_jobs: number;
+  total_certificates: number;
+  total_verifications: number;
+  sbom_count?: number;
+  proof_count?: number;
+  verification_count?: number;
+  certificate_count?: number;
+}
+
+// APPLICATION
+export interface ApplicationResponse {
+  id: string;
+  name: string;
+  vendor: string;
+  description?: string | null;
+  user_id?: string | null;
+  is_active: boolean;
+  archived_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApplicationCreateRequest {
+  name: string;
+  vendor: string;
+  description?: string | null;
+}
+
+export interface ApplicationUpdateRequest {
+  name?: string | null;
+  description?: string | null;
+}
+
+export interface ApplicationListParams {
+  skip?: number;
+  limit?: number;
+  include_archived?: boolean;
 }
 
 // SBOM
@@ -28,16 +106,30 @@ export interface SBOMUploadResponse {
   sbom_root: string | null;
   component_count: number | null;
   created_at: string;
+  application_name?: string | null;
+  vendor?: string | null;
 }
 
 // VULNERABILITY
-export type VulnerabilitySnapshotStatus = "pending" | "approved" | "revoked";
+export type VulnerabilitySnapshotStatus = "pending" | "approved" | "frozen" | "revoked";
 
 export interface VulnerabilitySnapshotResponse {
   id: string;
   snapshot_label: string;
   record_count: number;
   status: VulnerabilitySnapshotStatus;
+  authoritative_smt_root?: string | null;
+  frozen_at?: string | null;
+  frozen_by?: string | null;
+  approved_at?: string | null;
+  approved_by?: string | null;
+  revoked_at?: string | null;
+  revoked_by?: string | null;
+  revocation_reason?: string | null;
+}
+
+export interface RevocationRequest {
+  reason?: string | null;
 }
 
 export interface VulnerabilityIngestionItem {
@@ -45,7 +137,17 @@ export interface VulnerabilityIngestionItem {
   cvss_score: number;
 }
 
+export const TRUSTED_VULNERABILITY_SOURCES = [
+  "NVD",
+  "OSV",
+  "GitHub Advisory Database",
+] as const;
+
+export type TrustedVulnerabilitySource = (typeof TRUSTED_VULNERABILITY_SOURCES)[number];
+
 export interface VulnerabilityIngestionRequest {
+  source_identity: TrustedVulnerabilitySource | string;
+  provenance: Record<string, unknown>;
   vulnerabilities: VulnerabilityIngestionItem[];
 }
 
@@ -72,7 +174,7 @@ export interface PolicyCreateRequest {
 }
 
 // PROOF
-export type ProofJobStatus = "pending" | "assembling_witness" | "completed" | "failed" | "execution_blocked";
+export type ProofJobStatus = "pending" | "assembling_witness" | "running" | "completed" | "failed" | "execution_blocked";
 
 export interface ProofJobResponse {
   id: string;
@@ -90,7 +192,19 @@ export interface ProofJobResponse {
 }
 
 // VERIFICATION
-export type VerificationResult = "verified" | "invalid" | "authoritative_record_mismatch" | "public_input_mismatch" | "unavailable";
+export type VerificationResult =
+  | "verified"
+  | "invalid"
+  | "invalid_proof"
+  | "cryptographic_false"
+  | "structural_rejection"
+  | "runtime_failure"
+  | "environment_failure"
+  | "authoritative_record_mismatch"
+  | "record_mismatch"
+  | "public_input_mismatch"
+  | "unavailable"
+  | "verification_unavailable";
 
 export interface VerifyProofRequest {
   sbom_root: string;
@@ -111,7 +225,10 @@ export interface VerificationCertificateResponse {
   is_revoked: boolean;
   revoked_at: string | null;
   revoked_reason: string | null;
+  revoked_by?: string | null;
+  sha256_fingerprint?: string | null;
 }
+
 
 export interface VerificationResponse {
   id: string;

@@ -1,9 +1,17 @@
 import test from "node:test";
 import assert from "node:assert";
+import { certificateService } from "@/api/services/certificateService";
+import { NAVIGATION_CONFIG } from "@/config/navigation";
 
 test("Certificate - Public Accessibility Constraint", () => {
-  const isRouteGuardUsedOnPublicPage = false; 
-  assert.strictEqual(isRouteGuardUsedOnPublicPage, false, "The public certificate detail page must omit RouteGuard");
+  // Authenticated certificates listing is protected by allowed roles
+  const certNav = NAVIGATION_CONFIG.find((item) => item.href === "/certificates");
+  assert.ok(certNav, "Certificates listing item must exist in NAVIGATION_CONFIG");
+  assert.deepStrictEqual(certNav.allowedRoles, ["vendor", "admin", "auditor", "buyer"]);
+
+  // Public detail page /certificates/[id] is omitted from navigation to allow unauthenticated direct verification
+  const publicDetailNav = NAVIGATION_CONFIG.find((item) => item.href.startsWith("/certificates/"));
+  assert.strictEqual(publicDetailNav, undefined, "Public certificate verification pages are not restricted in NAVIGATION_CONFIG");
 });
 
 test("Certificate - Immutability Constraint", () => {
@@ -17,10 +25,62 @@ test("Certificate - Cryptographic boundary", () => {
   const fieldsRenderedInResult = ["id", "verification_request_id", "issued_at", "sbom_root", "vulnerability_db_root", "policy_hash"];
   const restrictedFields = ["witness", "private_components", "proof_artifact_content", "raw_sbom", "cvss_mappings"];
 
-  assert.ok(!fieldsRenderedInResult.some(f => restrictedFields.includes(f)), "Public certificates explicitly ignore private data");
+  assert.ok(!fieldsRenderedInResult.some((f) => restrictedFields.includes(f)), "Public certificates explicitly ignore private data");
 });
 
-test("Certificate - Backend Authority", () => {
-  const frontendGeneratesUuid = false;
-  assert.strictEqual(frontendGeneratesUuid, false, "The frontend never generates the certificate UUID; it routes to the backend-provided ID");
+test("Certificate - Backend Authority and Service Contract", () => {
+  // Service takes backend-assigned ID without client-side ID generation
+  const sampleBackendId = "11111111-2222-3333-4444-555555555555";
+  assert.strictEqual(typeof sampleBackendId, "string");
+  assert.strictEqual(typeof certificateService.getCertificate, "function");
+  assert.strictEqual(typeof certificateService.validateCertificate, "function");
+  assert.strictEqual(typeof certificateService.list, "function");
+});
+
+test("Certificate - Revocation State Awareness and Lifecycle", () => {
+  // A certificate can be revoked by backend authority if underlying security assumptions change.
+  // When is_revoked is true, the certificate must never be presented as currently valid.
+  const activeCert = {
+    valid: true,
+    reason: "certificate_active",
+    certificate_id: "c-1",
+    is_revoked: false,
+    revoked_at: null,
+  };
+
+  const revokedCert = {
+    valid: false,
+    reason: "certificate_revoked",
+    certificate_id: "c-2",
+    is_revoked: true,
+    revoked_at: "2026-10-16T12:00:00Z",
+  };
+
+  function isCertificateCurrentlyValid(cert: { valid: boolean; is_revoked: boolean | null }): boolean {
+    return cert.valid && cert.is_revoked !== true;
+  }
+
+  assert.strictEqual(isCertificateCurrentlyValid(activeCert), true, "Active certificate evaluates to currently valid");
+  assert.strictEqual(isCertificateCurrentlyValid(revokedCert), false, "Revoked certificate evaluates to invalid");
+});
+
+test("Certificate - Status Filtering Logic", () => {
+  const mockCerts = [
+    { id: "c-1", is_revoked: false },
+    { id: "c-2", is_revoked: true },
+    { id: "c-3", is_revoked: false },
+  ];
+
+  const activeCerts = mockCerts.filter((c) => !c.is_revoked);
+  const revokedCerts = mockCerts.filter((c) => c.is_revoked);
+
+  assert.strictEqual(activeCerts.length, 2, "Active filter matches non-revoked certificates");
+  assert.strictEqual(revokedCerts.length, 1, "Revoked filter matches revoked certificates");
+  assert.strictEqual(revokedCerts[0].id, "c-2");
+});
+
+test("Certificate - Service API Methods", () => {
+  assert.strictEqual(typeof certificateService.list, "function", "certificateService.list is exported");
+  assert.strictEqual(typeof certificateService.getCertificate, "function", "certificateService.getCertificate is exported");
+  assert.strictEqual(typeof certificateService.validateCertificate, "function", "certificateService.validateCertificate is exported");
 });

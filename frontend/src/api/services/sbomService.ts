@@ -16,8 +16,19 @@ export const sbomService = {
     });
   },
   
-  list: async ():Promise<SBOMUploadResponse[]> => {
-    return apiClient<SBOMUploadResponse[]>("/api/v1/sbom", {
+  list: async (params?: { skip?: number; limit?: number; all_tenants?: boolean }): Promise<SBOMUploadResponse[]> => {
+    const query = new URLSearchParams();
+    if (params?.skip !== undefined) query.set("skip", params.skip.toString());
+    if (params?.limit !== undefined) query.set("limit", params.limit.toString());
+    if (params?.all_tenants) query.set("all_tenants", "true");
+    const qs = query.toString();
+    return apiClient<SBOMUploadResponse[]>(`/api/v1/sbom${qs ? `?${qs}` : ""}`, {
+      method: "GET",
+    });
+  },
+
+  getById: async (uploadId: string): Promise<SBOMUploadResponse> => {
+    return apiClient<SBOMUploadResponse>(`/api/v1/sbom/${encodeURIComponent(uploadId)}`, {
       method: "GET",
     });
   }

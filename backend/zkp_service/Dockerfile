@@ -1,6 +1,17 @@
 FROM python:3.11-slim
 
+# Install dependencies for Nargo and Barretenberg
+RUN apt-get update && apt-get install -y curl tar gzip jq bash libstdc++6 git libc++1 libc++abi1 && \
+    rm -rf /var/lib/apt/lists/*
 
+# Install Nargo (0.32.0)
+RUN curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/noirup | bash -s -- -v 0.32.0
+
+# Install Barretenberg (bbup)
+RUN curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/master/barretenberg/cpp/installation/install | bash && \
+    ~/.bb/bbup -v 0.46.1
+
+ENV PATH="/root/.nargo/bin:/root/.bb:${PATH}"
 
 WORKDIR /app
 

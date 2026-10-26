@@ -1,0 +1,20 @@
+{
+  "status": "success",
+  "start_timestamp": "2026-10-19T21:33:29.887779+00:00",
+  "end_timestamp": "2026-10-20T00:14:03.827546+00:00",
+  "elapsed_seconds": 9633.75,
+  "per_segment_durations": {},
+  "total_chunks_processed": 32,
+  "total_segments_verified": 256,
+  "peak_wsl_used_gib": 9.217247009277344,
+  "min_host_avail_gib": 2.3676719665527344,
+  "negative_tests_results": {
+    "tampered_sbom_root": "REJECTED (record_mismatch)",
+    "tampered_vuln_db_root": "REJECTED (record_mismatch)",
+    "corrupted_proof_bytes": "REJECTED (invalid_proof)",
+    "truncated_proof_bytes": "REJECTED (invalid_proof)",
+    "policy_threshold_violation": "REJECTED (invalid_proof)",
+    "cross_tenant_rejection": "REJECTED (verification_unavailable)"
+  },
+  "errors": []
+}

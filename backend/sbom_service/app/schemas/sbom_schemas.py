@@ -111,18 +111,35 @@ class SBOMUploadResponse(BaseModel):
     sbom_root: str | None = None
     component_count: int | None = None
     created_at: datetime
+    application_name: str | None = None
+    vendor: str | None = None
 
     model_config = {"from_attributes": True}
 
     @classmethod
-    def from_model(cls, upload) -> "SBOMUploadResponse":
+    def from_model(
+        cls,
+        upload: object,
+        application_name: str | None = None,
+        vendor: str | None = None,
+    ) -> "SBOMUploadResponse":
+        app_name = application_name
+        app_vendor = vendor
+        app = getattr(upload, "application", None)
+        if app_name is None and app is not None:
+            app_name = getattr(app, "name", None)
+        if app_vendor is None and app is not None:
+            app_vendor = getattr(app, "vendor", None)
+
         return cls(
-            upload_id=upload.id,
-            application_id=upload.application_id,
-            status=upload.status,
-            format=upload.format,
-            filename=upload.filename,
-            sbom_root=upload.sbom_root,
-            component_count=upload.component_count,
-            created_at=upload.created_at,
+            upload_id=getattr(upload, "id"),
+            application_id=getattr(upload, "application_id"),
+            status=getattr(upload, "status"),
+            format=getattr(upload, "format"),
+            filename=getattr(upload, "filename", None),
+            sbom_root=getattr(upload, "sbom_root", None),
+            component_count=getattr(upload, "component_count", None),
+            created_at=getattr(upload, "created_at"),
+            application_name=app_name,
+            vendor=app_vendor,
         )

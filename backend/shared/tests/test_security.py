@@ -490,6 +490,47 @@ class TestConfigValidation:
         )
         assert "SuperSecret" in settings.url
 
+    def test_stage_g_mode_rejects_pg16_port_5433(self):
+        from shared.config import ConfigurationError, DatabaseSettings, validate_config
+        from unittest.mock import patch
+        import os
+
+        settings = DatabaseSettings(host="127.0.0.1", port=5433, user="postgres", password="password", name="postgres")
+        with patch.dict(os.environ, {"ENVIRONMENT": "stage_g", "JWT_SECRET_KEY": "jwt-test-secret-7f3c9a1d5b8e2c4f", "CERTIFICATE_SECRET_KEY": "cert-test-secret-9a2d6e1f4b7c8a3d"}), patch("shared.crypto.config.get_crypto_profile"):
+            with pytest.raises(ConfigurationError, match="Stage G authoritative mode .* prohibits targeting port 5433"):
+                validate_config(settings)
+
+    def test_stage_g_mode_rejects_pg16_database_name(self):
+        from shared.config import ConfigurationError, DatabaseSettings, validate_config
+        from unittest.mock import patch
+        import os
+
+        settings = DatabaseSettings(host="127.0.0.1", port=5432, user="postgres", password="password", name="ZKP_SBOM_LOCAL_DEV")
+        with patch.dict(os.environ, {"ENVIRONMENT": "stage_g", "JWT_SECRET_KEY": "jwt-test-secret-7f3c9a1d5b8e2c4f", "CERTIFICATE_SECRET_KEY": "cert-test-secret-9a2d6e1f4b7c8a3d"}), patch("shared.crypto.config.get_crypto_profile"):
+            with pytest.raises(ConfigurationError, match="Stage G authoritative mode .* prohibits targeting database 'ZKP_SBOM_LOCAL_DEV'"):
+                validate_config(settings)
+
+    def test_stage_g_mode_rejects_remote_insecure_ssl(self):
+        from shared.config import ConfigurationError, DatabaseSettings, validate_config
+        from unittest.mock import patch
+        import os
+
+        settings = DatabaseSettings(host="aws-0-ap-southeast-2.pooler.supabase.com", port=5432, user="postgres", password="password", name="postgres", ssl_mode="disable")
+        with patch.dict(os.environ, {"ENVIRONMENT": "stage_g", "JWT_SECRET_KEY": "jwt-test-secret-7f3c9a1d5b8e2c4f", "CERTIFICATE_SECRET_KEY": "cert-test-secret-9a2d6e1f4b7c8a3d"}), patch("shared.crypto.config.get_crypto_profile"):
+            with pytest.raises(ConfigurationError, match="prohibits insecure SSL mode 'disable'"):
+                validate_config(settings)
+
+    def test_stage_g_mode_accepts_valid_pg17_target(self):
+        from shared.config import DatabaseSettings, validate_config
+        from unittest.mock import patch
+        import os
+
+        settings = DatabaseSettings(host="aws-0-ap-southeast-2.pooler.supabase.com", port=5432, user="postgres", password="password", name="postgres", ssl_mode="require")
+        with patch.dict(os.environ, {"ENVIRONMENT": "stage_g", "JWT_SECRET_KEY": "jwt-test-secret-7f3c9a1d5b8e2c4f", "CERTIFICATE_SECRET_KEY": "cert-test-secret-9a2d6e1f4b7c8a3d"}), patch("shared.crypto.config.get_crypto_profile"):
+            result = validate_config(settings)
+        assert result.port == 5432
+        assert result.name == "postgres"
+
 
 # =========================================================================
 # §6 — Security headers middleware

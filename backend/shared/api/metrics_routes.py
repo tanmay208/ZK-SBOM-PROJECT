@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -15,6 +15,7 @@ router = APIRouter(prefix="/api/v1/metrics", tags=["metrics"])
 @router.get("", summary="Get dashboard metrics")
 @router.get("/", summary="Get dashboard metrics (with slash)", include_in_schema=False)
 def get_dashboard_metrics(
+    all_tenants: bool = Query(default=False, description="Admin-only: aggregate counts across all tenants"),
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
@@ -24,34 +25,32 @@ def get_dashboard_metrics(
       Returns ONLY scalar aggregate counts.
       Does NOT expose private SBOM components, vulnerability scores, Merkle paths, or witness data.
     """
-    total_sboms = (
-        db.query(func.count(SBOMUpload.id))
-        .filter(SBOMUpload.user_id == current_user.id)
-        .scalar()
-        or 0
-    )
-    total_jobs = (
-        db.query(func.count(ProofJob.id))
-        .filter(ProofJob.user_id == current_user.id)
-        .scalar()
-        or 0
-    )
-    total_verifications = (
-        db.query(func.count(VerificationRequest.id))
-        .filter(VerificationRequest.user_id == current_user.id)
-        .scalar()
-        or 0
-    )
-    total_certificates = (
-        db.query(func.count(VerificationCertificate.id))
-        .join(
-            VerificationRequest,
-            VerificationRequest.id == VerificationCertificate.verification_request_id,
+    if all_tenants and current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators may query metrics across all tenants",
         )
-        .filter(VerificationRequest.user_id == current_user.id)
-        .scalar()
-        or 0
+
+    is_global = all_tenants and current_user.role == "admin"
+
+    sbom_query = db.query(func.count(SBOMUpload.id))
+    job_query = db.query(func.count(ProofJob.id))
+    verification_query = db.query(func.count(VerificationRequest.id))
+    cert_query = db.query(func.count(VerificationCertificate.id)).join(
+        VerificationRequest,
+        VerificationRequest.id == VerificationCertificate.verification_request_id,
     )
+
+    if not is_global:
+        sbom_query = sbom_query.filter(SBOMUpload.user_id == current_user.id)
+        job_query = job_query.filter(ProofJob.user_id == current_user.id)
+        verification_query = verification_query.filter(VerificationRequest.user_id == current_user.id)
+        cert_query = cert_query.filter(VerificationRequest.user_id == current_user.id)
+
+    total_sboms = sbom_query.scalar() or 0
+    total_jobs = job_query.scalar() or 0
+    total_verifications = verification_query.scalar() or 0
+    total_certificates = cert_query.scalar() or 0
     
     return {
         "total_sboms": total_sboms,

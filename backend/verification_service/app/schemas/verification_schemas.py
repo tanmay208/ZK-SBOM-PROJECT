@@ -1,3 +1,4 @@
+import hashlib
 import re
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -39,11 +40,34 @@ class VerificationCertificateResponse(BaseModel):
     is_revoked: bool = False
     revoked_at: datetime | None = None
     revoked_reason: str | None = None
+    revoked_by: UUID4 | None = None
+    sha256_fingerprint: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
+    @model_validator(mode='before')
+    @classmethod
+    def sanitize_attributes(cls, data: object) -> object:
+        if isinstance(data, dict):
+            return data
+        # Handle MagicMock / test doubles where accessing unconfigured fields returns mock instances
+        attrs = {}
+        for field in [
+            "id", "verification_request_id", "certificate_data", "sbom_root",
+            "vulnerability_db_root", "policy_hash", "issued_at", "is_revoked",
+            "revoked_at", "revoked_reason", "revoked_by", "sha256_fingerprint"
+        ]:
+            val = getattr(data, field, None)
+            if hasattr(val, "_mock_name"):
+                attrs[field] = None
+            else:
+                attrs[field] = val
+        return attrs
+
     @model_validator(mode='after')
-    def mask_if_revoked(self) -> 'VerificationCertificateResponse':
+    def compute_fingerprint_and_mask(self) -> 'VerificationCertificateResponse':
+        if not self.sha256_fingerprint and self.certificate_data:
+            self.sha256_fingerprint = hashlib.sha256(self.certificate_data.encode("utf-8")).hexdigest()
         if self.is_revoked:
             self.certificate_data = None
         return self

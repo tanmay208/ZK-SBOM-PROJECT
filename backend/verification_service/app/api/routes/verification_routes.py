@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from shared.database import get_session
 from verification_service.app.schemas.verification_schemas import (
@@ -78,7 +79,13 @@ async def verify_proof(
         artifact = form.get("proof_artifact")
         if artifact is not None:
             if hasattr(artifact, "read"):
-                data["proof_artifact"] = (await artifact.read()).decode("utf-8")
+                try:
+                    data["proof_artifact"] = (await artifact.read()).decode("utf-8")
+                except UnicodeDecodeError:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Uploaded proof artifact must be valid UTF-8 text",
+                    )
             else:
                 data["proof_artifact"] = artifact
                 
@@ -91,11 +98,15 @@ async def verify_proof(
         raise HTTPException(status_code=415, detail="Unsupported media type")
 
     service = VerificationService(db)
-    req_record = service.process_verification(req_data, user_id=current_user.id)
+    req_record = await run_in_threadpool(
+        service.process_verification, req_data, user_id=current_user.id
+    )
     
     cert_record = None
     if req_record.result == "verified":
-        cert_record = service.get_certificate_by_request(req_record.id, user_id=current_user.id)
+        cert_record = await run_in_threadpool(
+            service.get_certificate_by_request, req_record.id, user_id=current_user.id
+        )
         
     return VerificationResponse(
         id=req_record.id,
@@ -122,13 +133,11 @@ def list_certificates(
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    from zkp_service.app.models.zkp_models import ProofJob
     from verification_service.app.models.verification_models import VerificationRequest
     
     certs = (
         db.query(VerificationCertificate)
         .join(VerificationRequest, VerificationRequest.id == VerificationCertificate.verification_request_id)
-        .join(ProofJob, ProofJob.id == VerificationRequest.proof_job_id)
         .filter(VerificationRequest.user_id == current_user.id)
         .order_by(VerificationCertificate.issued_at.desc())
         .offset(skip)
@@ -166,7 +175,12 @@ def revoke_certificate(
     Enforces IDOR protection by checking owner.
     """
     service = VerificationService(db)
-    cert = service.revoke_certificate(certificate_id, user_id=current_user.id, reason=request.reason)
+    cert = service.revoke_certificate(
+        certificate_id,
+        user_id=current_user.id,
+        reason=request.reason,
+        user_role=current_user.role,
+    )
     if not cert:
         raise HTTPException(status_code=404, detail="Certificate not found or unauthorized")
         

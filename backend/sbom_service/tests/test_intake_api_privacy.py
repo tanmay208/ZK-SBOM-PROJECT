@@ -136,3 +136,21 @@ def test_cyclonedx_oversized_name_privacy_leak():
     assert response.status_code == 422
     assert "PRIVATE_MARKER" not in response.text
     assert "exceeds maximum length" in response.text
+
+
+def test_multipart_upload_non_utf8_returns_422():
+    """Verify that uploading invalid UTF-8 bytes via multipart form cleanly returns HTTP 422."""
+    invalid_utf8_bytes = b"\xff\xfe\xfd\x80\x81"
+    response = client.post(
+        "/api/v1/sbom/upload",
+        data={
+            "application_name": "App",
+            "vendor": "Vendor",
+            "format": "CycloneDX",
+        },
+        files={
+            "content": ("bad_file.json", invalid_utf8_bytes, "application/octet-stream"),
+        },
+    )
+    assert response.status_code == 422
+    assert "Uploaded SBOM file must be valid UTF-8 text" in response.text

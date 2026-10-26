@@ -13,6 +13,7 @@ SECURITY_BOUNDARY.md §3:
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime
 
@@ -74,7 +75,7 @@ class VerificationCertificate(Base):
     __table_args__ = (
         UniqueConstraint('verification_request_id', name='uq_cert_per_request'),
         CheckConstraint(
-            "(is_revoked = false AND revoked_at IS NULL) OR "
+            "(is_revoked = false AND revoked_at IS NULL AND revoked_by IS NULL) OR "
             "(is_revoked = true AND revoked_at IS NOT NULL)",
             name="chk_certificate_revocation_state",
         ),
@@ -99,3 +100,19 @@ class VerificationCertificate(Base):
     is_revoked = Column(Boolean, nullable=False, default=False, server_default='0')
     revoked_at = Column(DateTime, nullable=True)
     revoked_reason = Column(String(255), nullable=True)
+    revoked_by = Column(
+        Uuid,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    @property
+    def sha256_fingerprint(self) -> str | None:
+        """
+        Compute lowercase hexadecimal SHA-256 fingerprint of the exact
+        encoded certificate token issued and persisted.
+        """
+        if not self.certificate_data:
+            return None
+        return hashlib.sha256(self.certificate_data.encode("utf-8")).hexdigest()
+

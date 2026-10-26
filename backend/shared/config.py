@@ -17,8 +17,15 @@ import logging
 import os
 import urllib.parse
 from dataclasses import dataclass, field
+from typing import Any
+
+from sqlalchemy.engine import URL
 
 logger = logging.getLogger(__name__)
+
+SUPPORTED_SSL_MODES = frozenset(
+    {"disable", "allow", "prefer", "require", "verify-ca", "verify-full"}
+)
 
 
 @dataclass(frozen=True)
@@ -39,31 +46,87 @@ class DatabaseSettings:
     ssl_mode: str = field(
         default_factory=lambda: os.getenv("DB_SSL_MODE", "require")
     )
+    ssl_root_cert: str | None = field(
+        default_factory=lambda: os.getenv("DB_SSL_ROOT_CERT")
+    )
     echo: bool = field(
         default_factory=lambda: os.getenv("DB_ECHO", "false").lower() == "true"
     )
 
     @property
-    def url(self) -> str:
-        escaped_password = urllib.parse.quote_plus(self.password)
-        return (
-            f"postgresql+psycopg2://{self.user}:{escaped_password}@{self.host}:{self.port}"
-            f"/{self.name}?sslmode={self.ssl_mode}"
+    def normalized_ssl_mode(self) -> str:
+        """Return the normalized lowercase and stripped SSL mode."""
+        return self.ssl_mode.strip().lower() if self.ssl_mode else ""
+
+    def validate_tls(self) -> None:
+        """Validate TLS configuration and fail closed on invalid settings."""
+        mode = self.normalized_ssl_mode
+        if mode not in SUPPORTED_SSL_MODES:
+            raise ConfigurationError(
+                f"Invalid DB_SSL_MODE '{self.ssl_mode}'; must be one of {sorted(SUPPORTED_SSL_MODES)}"
+            )
+
+        if mode in ("verify-ca", "verify-full"):
+            if not self.ssl_root_cert or not self.ssl_root_cert.strip():
+                raise ConfigurationError(
+                    f"DB_SSL_ROOT_CERT is required when DB_SSL_MODE is '{self.ssl_mode}'"
+                )
+            cert_path = self.ssl_root_cert.strip()
+            if not os.path.exists(cert_path) or not os.path.isfile(cert_path):
+                raise ConfigurationError(
+                    "Configured DB_SSL_ROOT_CERT does not exist or is not a regular file"
+                )
+            if not os.access(cert_path, os.R_OK):
+                raise ConfigurationError(
+                    "Configured DB_SSL_ROOT_CERT is not readable"
+                )
+            if os.path.getsize(cert_path) == 0:
+                raise ConfigurationError(
+                    "Configured DB_SSL_ROOT_CERT file is empty"
+                )
+
+    def as_url(self) -> URL:
+        """Return a SQLAlchemy URL object with safely encoded components."""
+        self.validate_tls()
+        query: dict[str, str] = {"sslmode": self.normalized_ssl_mode}
+        if self.ssl_root_cert and self.ssl_root_cert.strip():
+            query["sslrootcert"] = self.ssl_root_cert.strip()
+        return URL.create(
+            drivername="postgresql+psycopg2",
+            username=self.user,
+            password=self.password,
+            host=self.host,
+            port=self.port,
+            database=self.name,
+            query=query,
         )
+
+    @property
+    def url(self) -> str:
+        """Serialized connection URL string."""
+        return self.as_url().render_as_string(hide_password=False)
 
     @property
     def safe_url(self) -> str:
         """Connection string with the password masked for safe logging."""
-        return (
-            f"postgresql+psycopg2://{self.user}:****@{self.host}:{self.port}"
-            f"/{self.name}?sslmode={self.ssl_mode}"
-        )
+        raw = self.as_url().render_as_string(hide_password=True)
+        return raw.replace(":***@", ":****@")
+
+    @property
+    def connect_args(self) -> dict[str, Any]:
+        """Connection arguments suitable for psycopg2 / create_engine(..., connect_args=...)."""
+        self.validate_tls()
+        args: dict[str, Any] = {"sslmode": self.normalized_ssl_mode}
+        if self.ssl_root_cert and self.ssl_root_cert.strip():
+            args["sslrootcert"] = self.ssl_root_cert.strip()
+        return args
 
     def __repr__(self) -> str:
         """Mask password in repr to prevent accidental credential leakage."""
         return (
             f"DatabaseSettings(host={self.host!r}, port={self.port!r}, "
-            f"user={self.user!r}, password='****', name={self.name!r}, ssl_mode={self.ssl_mode!r})"
+            f"user={self.user!r}, password='****', name={self.name!r}, "
+            f"ssl_mode={self.ssl_mode!r}, ssl_root_cert={self.ssl_root_cert!r})"
         )
 
     def __str__(self) -> str:
@@ -167,6 +230,58 @@ def validate_config(db_settings: DatabaseSettings | None = None) -> DatabaseSett
 
     if not db_settings.name:
         errors.append("DB_NAME is not set")
+
+    # Enforce strict local database isolation allowlists
+    environment = os.environ.get("ENVIRONMENT", "").strip().lower()
+    if environment == "local_dev":
+        if db_settings.name != "ZKP_SBOM_LOCAL_DEV":
+            errors.append(
+                f"Local development mode (ENVIRONMENT=local_dev) must target database "
+                f"'ZKP_SBOM_LOCAL_DEV', but got '{db_settings.name}'."
+            )
+        host_norm = db_settings.host.strip().lower()
+        if host_norm == "127.0.0.1":
+            if db_settings.port != 5433:
+                errors.append(
+                    f"Local development mode on host (127.0.0.1) must target port 5433 (disposable instance), "
+                    f"but got port {db_settings.port}. Connecting to protected port 5432 is strictly prohibited."
+                )
+        elif host_norm == "zkp_sbom_local_dev":
+            if db_settings.port != 5432:
+                errors.append(
+                    f"Local development mode in container must target internal port 5432 on host 'zkp_sbom_local_dev', "
+                    f"but got port {db_settings.port}."
+                )
+        else:
+            errors.append(
+                f"Local development mode (ENVIRONMENT=local_dev) only permits host '127.0.0.1' (port 5433) "
+                f"or 'zkp_sbom_local_dev' (port 5432), but got '{db_settings.host}'."
+            )
+    elif environment == "stage_g":
+        if db_settings.port == 5433:
+            errors.append(
+                "Stage G authoritative mode (ENVIRONMENT=stage_g) prohibits targeting "
+                "port 5433 (PostgreSQL 16 development instance). "
+                "Authoritative operations require PostgreSQL 17."
+            )
+        if db_settings.name == "ZKP_SBOM_LOCAL_DEV":
+            errors.append(
+                "Stage G authoritative mode (ENVIRONMENT=stage_g) prohibits targeting "
+                "database 'ZKP_SBOM_LOCAL_DEV'. Authoritative operations require PostgreSQL 17."
+            )
+        host_norm = db_settings.host.strip().lower()
+        if host_norm not in ("127.0.0.1", "localhost"):
+            if db_settings.normalized_ssl_mode in ("disable", "allow"):
+                errors.append(
+                    f"Stage G authoritative mode on remote target '{db_settings.host}' "
+                    f"prohibits insecure SSL mode '{db_settings.ssl_mode}'. "
+                    "Must be 'require', 'verify-ca', or 'verify-full'."
+                )
+
+    try:
+        db_settings.validate_tls()
+    except ConfigurationError as err:
+        errors.append(str(err))
         
     jwt_secret = os.environ.get("JWT_SECRET_KEY", "")
     cert_secret = os.environ.get("CERTIFICATE_SECRET_KEY", "")

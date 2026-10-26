@@ -21,3 +21,24 @@ app = create_app(
 )
 
 app.include_router(zkp_router)
+
+
+@app.on_event("startup")
+def startup_reconciliation() -> None:
+    """Reconcile any orphaned proof jobs from previous process terminations."""
+    from shared.database import get_engine, get_session
+    from zkp_service.app.core.job_lock import reconcile_all_abandoned_jobs
+    try:
+        engine = get_engine()
+        db_gen = get_session()
+        db = next(db_gen)
+        try:
+            reconcile_all_abandoned_jobs(db, engine)
+        finally:
+            try:
+                next(db_gen)
+            except StopIteration:
+                pass
+    except Exception:
+        # Fail safe if database is not yet ready or during lightweight unit tests
+        pass

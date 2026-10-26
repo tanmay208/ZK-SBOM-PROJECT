@@ -1,3 +1,4 @@
+from shared.logging import audit_log
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -10,7 +11,7 @@ from verification_service.app.core.verifier import NoirVerifier
 
 class VerificationService:
     """
-    Business logic for processing verification requests, enforcing idempotency, 
+    Business logic for processing verification requests, enforcing idempotency,
     and gating certificate creation based on strict cryptographic success.
     """
 
@@ -21,9 +22,9 @@ class VerificationService:
 
     def process_verification(self, request: VerifyProofRequest, user_id: UUID) -> VerificationRequest:
         """
-        Process a verification request. Returns the VerificationRequest model 
+        Process a verification request. Returns the VerificationRequest model
         (which may have a related certificate if verified).
-        
+
         Security invariant (ZK-002): The verifier receives the expected public
         inputs from the API request and compares them to the public inputs
         embedded in the proof file. A certificate is only issued when BOTH
@@ -32,8 +33,14 @@ class VerificationService:
         # 1. Idempotency Check
         existing_req = self._repo.get_request_by_fingerprint(request, user_id)
         if existing_req:
-            if existing_req.result in ["record_mismatch", "unavailable", "verification_unavailable"]:
-                pass # re-evaluate
+            if existing_req.result in [
+                "record_mismatch",
+                "unavailable",
+                "verification_unavailable",
+                "runtime_failure",
+                "environment_failure",
+            ]:
+                pass # re-evaluate operational / transient failures
             else:
                 return existing_req
 
@@ -48,14 +55,23 @@ class VerificationService:
         if not job or job.user_id != user_id:
             if existing_req:
                 return self._repo.update_verification_record(existing_req, "verification_unavailable")
+            # If proof_job_id does not exist in zkp.proof_jobs at all, we clear it
+            # so the DB foreign key constraint (proof_job_id -> zkp.proof_jobs.id) is preserved.
+            persisted_req = request
+            if request.proof_job_id is not None:
+                job_in_db = self._session.query(ProofJob).filter(ProofJob.id == request.proof_job_id).first()
+                if not job_in_db:
+                    persisted_req = request.model_copy(update={"proof_job_id": None})
             return self._repo.create_verification_record(
-                request, "verification_unavailable", user_id=user_id
+                persisted_req, "verification_unavailable", user_id=user_id
             )
 
         # 3. Authoritative Record Binding (ZK-002)
-        # Prevent proof verification from succeeding if roots belong to unapproved/nonexistent records
+        # Prevent proof verification from succeeding if roots belong to unfrozen/nonexistent records.
+        # SECURITY INVARIANT: New compliance verification requires the policy to be ACTIVE (is_active == 1).
+        # Inactive policies cannot authorize new certificates.
         if not self._repo.validate_authoritative_records(
-            request.sbom_root, request.vulnerability_db_root, request.policy_hash
+            request.sbom_root, request.vulnerability_db_root, request.policy_hash, require_active_policy=True
         ):
         # Authoritative records mismatch, treat as failure
             if existing_req:
@@ -88,7 +104,7 @@ class VerificationService:
         cert = self._repo.get_certificate(certificate_id)
         if not cert:
             return None
-            
+
         return self._validate_cert_job(cert, user_id)
 
     def get_certificate_by_request(self, request_id: UUID, user_id: UUID = None) -> VerificationCertificate | None:
@@ -98,38 +114,100 @@ class VerificationService:
         cert = self._repo.get_certificate_by_request_id(request_id)
         if not cert:
             return None
-            
+
         return self._validate_cert_job(cert, user_id)
-        
+
     def _validate_cert_job(self, cert: VerificationCertificate, user_id: UUID = None) -> VerificationCertificate | None:
         from zkp_service.app.models.zkp_models import ProofJob
-        
+
         req = self._session.query(VerificationRequest).filter(VerificationRequest.id == cert.verification_request_id).first()
         if not req:
             return None
-            
+
         if user_id and req.user_id != user_id:
             return None
-            
-        job = self._session.query(ProofJob).filter(ProofJob.id == req.proof_job_id).first()
-        if not job:
-            return None
-            
+
+        if req.proof_job_id is not None:
+            job = self._session.query(ProofJob).filter(ProofJob.id == req.proof_job_id).first()
+            if not job:
+                return None
+
         return cert
 
-    def revoke_certificate(self, certificate_id: UUID, user_id: UUID, reason: str = None) -> VerificationCertificate | None:
+    def revoke_certificate(
+        self,
+        certificate_id: UUID,
+        user_id: UUID,
+        reason: str = None,
+        user_role: str = "vendor",
+    ) -> VerificationCertificate | None:
         """
-        Revoke a certificate if it belongs to the user.
+        Revoke a certificate if authorized.
+
+        Authorization rules:
+        - 'admin': Authorized to revoke any eligible certificate across tenants.
+        - 'vendor': Authorized to revoke only certificates belonging to their own tenant/requests.
+        - Other roles (auditor, buyer, trusted_importer): Unauthorized to revoke.
         """
-        cert = self.get_certificate(certificate_id, user_id=user_id)
-        if not cert:
+        if user_role == "admin":
+            cert = self._repo.get_certificate(certificate_id)
+            if not cert:
+                return None
+            req = self._session.query(VerificationRequest).filter(
+                VerificationRequest.id == cert.verification_request_id
+            ).first()
+            if not req:
+                return None
+        elif user_role == "vendor":
+            cert = self.get_certificate(certificate_id, user_id=user_id)
+            if not cert:
+                audit_log(
+                    "verification_service",
+                    "certificate_revocation",
+                    f"Certificate {certificate_id} not found or unauthorized for vendor {user_id}",
+                    actor_id=str(user_id),
+                    resource_type="verification_certificate",
+                    resource_id=str(certificate_id),
+                    outcome="denied",
+                )
+                return None
+        else:
+            audit_log(
+                "verification_service",
+                "certificate_revocation",
+                f"Unauthorized role '{user_role}' attempted certificate revocation for {certificate_id}",
+                actor_id=str(user_id),
+                resource_type="verification_certificate",
+                resource_id=str(certificate_id),
+                outcome="denied",
+            )
             return None
-            
+
         try:
-            return self._repo.revoke_certificate(cert, reason=reason)
+            revoked_cert = self._repo.revoke_certificate(cert, reason=reason, revoked_by=user_id)
+            if revoked_cert:
+                audit_log(
+                    "verification_service",
+                    "certificate_revocation",
+                    f"Certificate {certificate_id} revoked by actor {user_id} (role={user_role})",
+                    actor_id=str(user_id),
+                    resource_type="verification_certificate",
+                    resource_id=str(certificate_id),
+                    outcome="success",
+                )
+            return revoked_cert
         except LookupError:
             # A concurrent cascade/delete must have the same anti-enumeration
             # response as an unknown certificate.
+            audit_log(
+                "verification_service",
+                "certificate_revocation",
+                f"Certificate revocation lookup error for {certificate_id} by actor {user_id}",
+                actor_id=str(user_id),
+                resource_type="verification_certificate",
+                resource_id=str(certificate_id),
+                outcome="denied",
+            )
             return None
 
     def validate_certificate(self, certificate_id: UUID) -> dict:
@@ -204,9 +282,28 @@ class VerificationService:
         """
         import jwt as pyjwt
         import os
+        import json
 
-        secret = os.environ.get("CERTIFICATE_SECRET_KEY")
-        if not secret:
+        keys_config = os.environ.get("CERTIFICATE_SECRET_KEYS")
+        default_secret = os.environ.get("CERTIFICATE_SECRET_KEY")
+
+        keys = {}
+        if keys_config:
+            try:
+                keys = json.loads(keys_config)
+            except json.JSONDecodeError:
+                return {
+                    "valid": False,
+                    "reason": "server_configuration_error",
+                    "certificate_id": None,
+                }
+        if default_secret:
+            if "legacy" not in keys:
+                keys["legacy"] = default_secret
+            if "v1" not in keys:
+                keys["v1"] = default_secret
+
+        if not keys:
             return {
                 "valid": False,
                 "reason": "server_configuration_error",
@@ -214,7 +311,31 @@ class VerificationService:
             }
 
         try:
-            payload = pyjwt.decode(token, secret, algorithms=["HS256"])
+            unverified_header = pyjwt.get_unverified_header(token)
+            kid = unverified_header.get("kid", "legacy")
+        except pyjwt.PyJWTError:
+            return {
+                "valid": False,
+                "reason": "token_invalid",
+                "certificate_id": None,
+            }
+
+        if kid not in keys:
+            return {
+                "valid": False,
+                "reason": "unknown_key_id",
+                "certificate_id": None,
+            }
+
+        secret = keys[kid]
+
+        try:
+            payload = pyjwt.decode(
+                token,
+                secret,
+                algorithms=["HS256"],
+                issuer="antigravity-zkp-authority"
+            )
         except pyjwt.ExpiredSignatureError:
             return {
                 "valid": False,
@@ -245,12 +366,13 @@ class VerificationService:
                 "certificate_id": None,
             }
 
-        # CRITICAL: even though the JWT signature passes, revocation
-        # in the authoritative database takes precedence.
-        if cert.is_revoked:
+        # CRITICAL: Even though the JWT signature passes, authoritative
+        # database state (revocation and historical record validity) takes precedence.
+        cert_val = self.validate_certificate(cert.id)
+        if not cert_val["valid"]:
             return {
                 "valid": False,
-                "reason": "certificate_revoked",
+                "reason": cert_val["reason"],
                 "certificate_id": str(cert.id),
             }
 

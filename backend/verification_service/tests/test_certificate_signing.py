@@ -208,3 +208,157 @@ def test_create_record_uses_cert_secret(repo, monkeypatch):
     
     with pytest.raises(jwt.InvalidSignatureError):
         jwt.decode(produced_cert.certificate_data, "wrong_jwt_secret_1234567890", algorithms=["HS256"])
+
+
+def test_certificate_fingerprint_generation(repo, mock_request, monkeypatch):
+    """
+    Ensure the certificate fingerprint is exactly the lowercase SHA-256
+    hex digest of the issued token bytes.
+    """
+    monkeypatch.setenv("CERTIFICATE_SECRET_KEY", "deterministic_test_secret_for_fingerprint_0123456789")
+    certs = []
+    def mock_add(obj):
+        if not getattr(obj, "id", None):
+            obj.id = uuid4()
+        if hasattr(obj, "certificate_data"):
+            certs.append(obj)
+    repo._session.add.side_effect = mock_add
+
+    record = repo.create_verification_record(mock_request, "verified", uuid4())
+    assert record is not None
+    assert len(certs) == 1
+    produced_cert = certs[0]
+
+    token_bytes = produced_cert.certificate_data.encode("utf-8")
+    expected_fingerprint = hashlib.sha256(token_bytes).hexdigest()
+
+    assert produced_cert.sha256_fingerprint is not None
+    assert produced_cert.sha256_fingerprint == expected_fingerprint
+    assert len(produced_cert.sha256_fingerprint) == 64
+    assert produced_cert.sha256_fingerprint == produced_cert.sha256_fingerprint.lower()
+
+
+def test_certificate_fingerprint_stability_and_uniqueness():
+    """
+    Ensure the fingerprint is deterministic and stable for identical tokens,
+    and differs when token bytes change.
+    """
+    from verification_service.app.models.verification_models import VerificationCertificate
+
+    token_a = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.abc"
+    token_b = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyIn0.xyz"
+
+    cert_a1 = VerificationCertificate(
+        id=uuid4(),
+        verification_request_id=uuid4(),
+        certificate_data=token_a,
+        sbom_root="0x" + "1"*64,
+        vulnerability_db_root="0x" + "2"*64,
+        policy_hash="0x" + "3"*64,
+    )
+    cert_a2 = VerificationCertificate(
+        id=uuid4(),
+        verification_request_id=uuid4(),
+        certificate_data=token_a,
+        sbom_root="0x" + "1"*64,
+        vulnerability_db_root="0x" + "2"*64,
+        policy_hash="0x" + "3"*64,
+    )
+    cert_b = VerificationCertificate(
+        id=uuid4(),
+        verification_request_id=uuid4(),
+        certificate_data=token_b,
+        sbom_root="0x" + "1"*64,
+        vulnerability_db_root="0x" + "2"*64,
+        policy_hash="0x" + "3"*64,
+    )
+
+    # Stability
+    assert cert_a1.sha256_fingerprint == cert_a2.sha256_fingerprint
+    assert cert_a1.sha256_fingerprint == hashlib.sha256(token_a.encode("utf-8")).hexdigest()
+
+    # Uniqueness
+    assert cert_a1.sha256_fingerprint != cert_b.sha256_fingerprint
+
+
+def test_certificate_response_schema_exposes_fingerprint():
+    """
+    Ensure VerificationCertificateResponse exposes sha256_fingerprint
+    without leaking secrets.
+    """
+    from datetime import datetime, timezone
+    from verification_service.app.models.verification_models import VerificationCertificate
+    from verification_service.app.schemas.verification_schemas import VerificationCertificateResponse
+
+    token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.valid_token_payload.signature"
+    cert = VerificationCertificate(
+        id=uuid4(),
+        verification_request_id=uuid4(),
+        certificate_data=token,
+        sbom_root="0x" + "a"*64,
+        vulnerability_db_root="0x" + "b"*64,
+        policy_hash="0x" + "c"*64,
+        issued_at=datetime.now(timezone.utc),
+        is_revoked=False,
+    )
+
+    response = VerificationCertificateResponse.model_validate(cert)
+    assert response.sha256_fingerprint == hashlib.sha256(token.encode("utf-8")).hexdigest()
+    assert response.certificate_data == token
+    assert response.revoked_by is None
+
+    # Serialization dictionary does not leak secrets
+    resp_dict = response.model_dump()
+    assert "sha256_fingerprint" in resp_dict
+    assert resp_dict["sha256_fingerprint"] == hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def test_revoked_certificate_preserves_fingerprint_while_masking_token():
+    """
+    Ensure that when a certificate is revoked, the response masks the raw
+    signature token but preserves the sha256_fingerprint for verification auditability.
+    """
+    from datetime import datetime, timezone
+    from verification_service.app.models.verification_models import VerificationCertificate
+    from verification_service.app.schemas.verification_schemas import VerificationCertificateResponse
+
+    token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.compromised_token.signature"
+    now = datetime.now(timezone.utc)
+    revoker_id = uuid4()
+
+    cert = VerificationCertificate(
+        id=uuid4(),
+        verification_request_id=uuid4(),
+        certificate_data=token,
+        sbom_root="0x" + "a"*64,
+        vulnerability_db_root="0x" + "b"*64,
+        policy_hash="0x" + "c"*64,
+        issued_at=now,
+        is_revoked=True,
+        revoked_at=now,
+        revoked_reason="Compromised private key",
+        revoked_by=revoker_id,
+    )
+
+    response = VerificationCertificateResponse.model_validate(cert)
+
+    # Token masked
+    assert response.certificate_data is None
+    # Fingerprint preserved
+    assert response.sha256_fingerprint == hashlib.sha256(token.encode("utf-8")).hexdigest()
+    assert response.is_revoked is True
+    assert response.revoked_reason == "Compromised private key"
+    assert response.revoked_by == revoker_id
+
+
+def test_certificate_model_revoked_by_mapping():
+    """
+    Ensure the SQLAlchemy model declares revoked_by mapped to users.id.
+    """
+    from verification_service.app.models.verification_models import VerificationCertificate
+
+    assert hasattr(VerificationCertificate, "revoked_by")
+    col = VerificationCertificate.__table__.c.revoked_by
+    assert col is not None
+    assert col.nullable is True
+

@@ -88,6 +88,7 @@ class TestPrivacyLeakage:
         approved = {
             "upload_id", "application_id", "status", "format",
             "filename", "sbom_root", "component_count", "created_at",
+            "application_name", "vendor",
         }
         actual = set(SBOMUploadResponse.model_fields.keys())
         unexpected = actual - approved

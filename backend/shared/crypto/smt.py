@@ -22,6 +22,13 @@ class SparseMerkleTree:
     Uses Poseidon hash for internal nodes.
     """
     def __init__(self, depth: int = SMT_DEPTH):
+        if isinstance(depth, bool) or not isinstance(depth, int) or depth <= 0:
+            raise ValueError(f"SMT depth must be a positive integer, got {depth!r}")
+        if depth > len(EMPTY_HASHES) - 1:
+            raise ValueError(
+                f"Requested SMT depth {depth} exceeds available empty-hash capacity "
+                f"({len(EMPTY_HASHES) - 1}). In DEV_MODE=1, SMT depth is constrained to {SMT_DEPTH}."
+            )
         self.leaves = {}
         self.depth = depth
         self._cached_levels = None

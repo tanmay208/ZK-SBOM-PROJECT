@@ -59,3 +59,101 @@ test("401 clears the token and notifies the authentication provider", async () =
     globalThis.fetch = originalFetch;
   }
 });
+
+test("API client normalizes 403, 404, 422, and 429 status codes", async () => {
+  const originalFetch = globalThis.fetch;
+
+  try {
+    // 403 Forbidden
+    globalThis.fetch = async () => Response.json({ detail: "Forbidden access" }, { status: 403 });
+    await assert.rejects(apiClient("/forbidden"), (err: unknown) => {
+      return err instanceof ApiError && err.status === 403 && err.code === "FORBIDDEN";
+    });
+
+    // 404 Not Found
+    globalThis.fetch = async () => Response.json({ detail: "Resource not found" }, { status: 404 });
+    await assert.rejects(apiClient("/missing"), (err: unknown) => {
+      return err instanceof ApiError && err.status === 404 && err.code === "NOT_FOUND";
+    });
+
+    // 422 Unprocessable Entity
+    globalThis.fetch = async () => Response.json({ detail: [{ msg: "field required", loc: ["body", "purl"] }] }, { status: 422 });
+    await assert.rejects(apiClient("/invalid-schema"), (err: unknown) => {
+      return err instanceof ApiError && err.status === 422 && (err.code === "VALIDATION_ERROR" || err.code === "UNPROCESSABLE_ENTITY");
+    });
+
+    // 429 Too Many Requests
+    globalThis.fetch = async () => Response.json({ detail: "A proof job is already active for this user" }, { status: 429 });
+    await assert.rejects(apiClient("/rate-limited"), (err: unknown) => {
+      return err instanceof ApiError && err.status === 429 && err.code === "TOO_MANY_REQUESTS";
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("API client extracts Retry-After header and sets retryAfter property on 429", async () => {
+  const originalFetch = globalThis.fetch;
+
+  try {
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ detail: "Rate limit exceeded" }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": "30" },
+      });
+
+    await assert.rejects(apiClient("/rate-limited-retry"), (err: unknown) => {
+      assert.ok(err instanceof ApiError);
+      assert.strictEqual(err.status, 429);
+      assert.strictEqual(err.retryAfter, 30);
+      assert.ok(err.message.includes("30 seconds"));
+      return true;
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("API Service Endpoints conform to consistent route contracts", async () => {
+  const originalFetch = globalThis.fetch;
+  const recordedCalls: { url: string; method: string; body?: unknown }[] = [];
+
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+    recordedCalls.push({
+      url,
+      method: init?.method || "GET",
+      body: init?.body ? JSON.parse(init.body as string) : undefined
+    });
+    return Response.json({ status: "ok" });
+  };
+
+  try {
+    const { vulnerabilityService } = await import("../services/vulnerabilityService");
+    const { metricsService } = await import("../services/metricsService");
+    const { proofService } = await import("../services/proofService");
+    const { sbomService } = await import("../services/sbomService");
+
+    // Test freeze snapshot endpoint
+    await vulnerabilityService.freeze("test-uuid-1");
+    assert.ok(recordedCalls.some(c => c.url.includes("/api/v1/vulnerability/snapshots/test-uuid-1/freeze") && c.method === "POST"));
+
+    // Test revoke snapshot with optional reason
+    await vulnerabilityService.revoke("test-uuid-2", "compromised feed");
+    assert.ok(recordedCalls.some(c => c.url.includes("/api/v1/vulnerability/snapshots/test-uuid-2/revoke") && c.method === "POST" && (c.body as Record<string, unknown>)?.reason === "compromised feed"));
+
+    // Test metrics service call
+    await metricsService.getMetrics();
+    assert.ok(recordedCalls.some(c => c.url.includes("/api/v1/metrics") && c.method === "GET"));
+
+    // Test proof list service call
+    await proofService.list();
+    assert.ok(recordedCalls.some(c => c.url.includes("/api/v1/zkp") && c.method === "GET"));
+
+    // Test sbom list service call
+    await sbomService.list();
+    assert.ok(recordedCalls.some(c => c.url.includes("/api/v1/sbom") && c.method === "GET"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

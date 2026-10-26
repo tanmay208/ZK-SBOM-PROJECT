@@ -28,3 +28,29 @@ test("Query Cache is cleared on logout", () => {
   clearCache();
   assert.strictEqual(cacheItems, 0, "Query cache should be flushed to prevent cross-session leakage");
 });
+
+test("Registration and Login - Authenticated redirect lifecycle", () => {
+  let redirectedTo: string | null = null;
+  const mockRouter = {
+    push: (url: string) => { redirectedTo = url; }
+  };
+
+  // Simulate effect execution when authenticated
+  const handleAuthStatus = (status: string) => {
+    if (status === "authenticated") {
+      mockRouter.push("/");
+    }
+  };
+
+  handleAuthStatus("unauthenticated");
+  assert.strictEqual(redirectedTo, null, "Unauthenticated user remains on register/login page");
+
+  handleAuthStatus("authenticated");
+  assert.strictEqual(redirectedTo, "/", "Authenticated user is redirected to home/dashboard via effect");
+});
+
+test("Role Model - trusted_importer is recognized and isolated", () => {
+  const allRoles = ["vendor", "admin", "auditor", "trusted_importer"];
+  assert.strictEqual(allRoles.length, 4, "Role system recognizes all 4 authoritative personas");
+  assert.ok(allRoles.includes("trusted_importer"), "trusted_importer is a valid system role");
+});

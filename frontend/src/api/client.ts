@@ -91,6 +91,8 @@ async function handleApiError(response: Response): Promise<never> {
     errorMessage = response.statusText;
   }
 
+  let retryAfter: number | undefined;
+
   // Intercept 401 and clear memory token
   if (response.status === 401) {
     authTransport.handleUnauthorized();
@@ -105,10 +107,24 @@ async function handleApiError(response: Response): Promise<never> {
     errorCode = "PAYLOAD_TOO_LARGE";
   } else if (response.status === 422) {
     errorCode = "UNPROCESSABLE_ENTITY";
+  } else if (response.status === 429) {
+    errorCode = "TOO_MANY_REQUESTS";
+    const retryHeader = response.headers?.get ? response.headers.get("Retry-After") : null;
+    if (retryHeader) {
+      const parsed = parseInt(retryHeader, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        retryAfter = parsed;
+      }
+    }
+    if (retryAfter) {
+      errorMessage = `Rate limit exceeded. Please retry after ${retryAfter} seconds.`;
+    } else if (errorMessage === "Unknown API Error" || errorMessage === "Too Many Requests") {
+      errorMessage = "Rate limit exceeded. Please try again later.";
+    }
   } else if (response.status >= 500) {
     errorMessage = "An unexpected server error occurred. Please try again later.";
     errorCode = "SERVER_ERROR";
   }
 
-  throw new ApiError(errorMessage, response.status, errorCode);
+  throw new ApiError(errorMessage, response.status, errorCode, retryAfter);
 }

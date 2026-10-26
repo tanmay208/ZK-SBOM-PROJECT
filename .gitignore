@@ -39,6 +39,7 @@ build/
 .env
 .env.*
 !.env.example
+!.env.local_dev.example
 db.txt
 
 # Noir/Nargo & Local Tooling
@@ -65,6 +66,7 @@ data/*
 scripts/noir_src/
 
 # Scratch & Payloads
+scratch/
 scratch_*.txt
 request*.json
 test_baseline_output.txt

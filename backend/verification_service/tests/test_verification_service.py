@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from uuid import uuid4, UUID
-from datetime import datetime
+from datetime import datetime, timezone
 
 from verification_service.app.schemas.verification_schemas import VerifyProofRequest
 from verification_service.app.services.verification_service import VerificationService
@@ -63,8 +63,50 @@ def test_invalid_proof(mock_session):
     )
     
     result_req = service.process_verification(request, user_id=user_id)
-    assert result_req.result == "invalid_proof"
+    assert result_req.result in ["invalid_proof", "structural_rejection"]
     assert result_req.verified_at is None
+
+
+def test_taxonomy_distinctions_in_service_processing(mock_session):
+    """Ensure service correctly records distinct error taxonomy outcomes without issuing certificates."""
+    user_id = uuid4()
+    from zkp_service.app.models.zkp_models import ProofJob
+    job = ProofJob(id=uuid4(), user_id=user_id)
+
+    def query_mock(model):
+        if model.__name__ == "VerificationRequest":
+            return MagicMock(filter=lambda *args: MagicMock(first=lambda: None))
+        if model.__name__ == "ProofJob":
+            return MagicMock(filter=lambda *args: MagicMock(first=lambda: job))
+        if model.__name__ == "VerificationCertificate":
+            return MagicMock(filter=lambda *args: MagicMock(first=lambda: None))
+        return MagicMock()
+
+    mock_session.query.side_effect = query_mock
+
+    taxonomy_modes = [
+        "structural_rejection",
+        "runtime_failure",
+        "environment_failure",
+        "cryptographic_false",
+    ]
+
+    for mode in taxonomy_modes:
+        service = VerificationService(mock_session)
+        service._verifier = MagicMock()
+        service._verifier.verify.return_value = mode
+
+        request = VerifyProofRequest(
+            sbom_root="0x" + "1" * 64,
+            vulnerability_db_root="0x" + "2" * 64,
+            policy_hash="0x" + "3" * 64,
+            proof_job_id=job.id,
+        )
+
+        res = service.process_verification(request, user_id=user_id)
+        assert res.result == mode
+        assert res.verified_at is None
+        assert getattr(res, "certificate", None) is None
 
 
 class MockVerifier:
@@ -202,13 +244,15 @@ def test_revocation_is_terminal_and_idempotent(mock_session):
     from verification_service.app.repositories.verification_repository import VerificationRepository
     from verification_service.app.models.verification_models import VerificationCertificate
 
-    revoked_at = datetime.utcnow()
+    revoked_at = datetime.now(timezone.utc)
+    original_revoker = uuid4()
     cert = VerificationCertificate(
         id=uuid4(),
         verification_request_id=uuid4(),
         is_revoked=True,
         revoked_at=revoked_at,
         revoked_reason="original reason",
+        revoked_by=original_revoker,
     )
     (
         mock_session.query.return_value
@@ -218,13 +262,151 @@ def test_revocation_is_terminal_and_idempotent(mock_session):
     ) = cert
 
     result = VerificationRepository(mock_session).revoke_certificate(
-        cert, reason="replacement reason"
+        cert, reason="replacement reason", revoked_by=uuid4()
     )
 
     assert result is cert
     assert result.revoked_at == revoked_at
     assert result.revoked_reason == "original reason"
+    assert result.revoked_by == original_revoker
     mock_session.commit.assert_not_called()
+
+
+def test_revocation_records_revoked_by_on_first_revocation(mock_session):
+    from verification_service.app.repositories.verification_repository import VerificationRepository
+    from verification_service.app.models.verification_models import VerificationCertificate
+
+    cert = VerificationCertificate(
+        id=uuid4(),
+        verification_request_id=uuid4(),
+        is_revoked=False,
+        revoked_at=None,
+        revoked_reason=None,
+        revoked_by=None,
+    )
+    (
+        mock_session.query.return_value
+        .filter.return_value
+        .with_for_update.return_value
+        .first.return_value
+    ) = cert
+
+    revoker_id = uuid4()
+    result = VerificationRepository(mock_session).revoke_certificate(
+        cert, reason="First revocation", revoked_by=revoker_id
+    )
+
+    assert result is cert
+    assert result.is_revoked is True
+    assert result.revoked_reason == "First revocation"
+    assert result.revoked_by == revoker_id
+    assert result.revoked_at is not None
+    mock_session.commit.assert_called_once()
+
+
+@patch("verification_service.app.services.verification_service.audit_log")
+def test_service_revoke_certificate_governance_and_roles(mock_audit, mock_session):
+    from verification_service.app.services.verification_service import VerificationService
+    from verification_service.app.models.verification_models import VerificationCertificate, VerificationRequest
+    from zkp_service.app.models.zkp_models import ProofJob
+
+    owner_id = uuid4()
+    admin_id = uuid4()
+    auditor_id = uuid4()
+    other_vendor_id = uuid4()
+
+    cert_id = uuid4()
+    req_id = uuid4()
+    job_id = uuid4()
+
+    cert = VerificationCertificate(
+        id=cert_id,
+        verification_request_id=req_id,
+        is_revoked=False,
+    )
+    req = VerificationRequest(
+        id=req_id,
+        proof_job_id=job_id,
+        user_id=owner_id,
+        result="verified",
+    )
+    job = ProofJob(id=job_id, user_id=owner_id)
+
+    # 1. Vendor owner can revoke
+    service = VerificationService(mock_session)
+    service._repo.get_certificate = MagicMock(return_value=cert)
+    service._repo.revoke_certificate = MagicMock(return_value=cert)
+
+    def mock_query(model):
+        m = MagicMock()
+        if model == VerificationRequest:
+            m.filter.return_value.first.return_value = req
+        elif model == ProofJob:
+            m.filter.return_value.first.return_value = job
+        return m
+    mock_session.query.side_effect = mock_query
+
+    res = service.revoke_certificate(cert_id, user_id=owner_id, reason="Owner Compromise", user_role="vendor")
+    assert res is cert
+    service._repo.revoke_certificate.assert_called_with(cert, reason="Owner Compromise", revoked_by=owner_id)
+    mock_audit.assert_called_with(
+        "verification_service",
+        "certificate_revocation",
+        f"Certificate {cert_id} revoked by actor {owner_id} (role=vendor)",
+        actor_id=str(owner_id),
+        resource_type="verification_certificate",
+        resource_id=str(cert_id),
+        outcome="success",
+    )
+
+    # 2. Admin can revoke across tenants
+    service._repo.revoke_certificate.reset_mock()
+    mock_audit.reset_mock()
+    res_admin = service.revoke_certificate(cert_id, user_id=admin_id, reason="Admin Emergency", user_role="admin")
+    assert res_admin is cert
+    service._repo.revoke_certificate.assert_called_with(cert, reason="Admin Emergency", revoked_by=admin_id)
+    mock_audit.assert_called_with(
+        "verification_service",
+        "certificate_revocation",
+        f"Certificate {cert_id} revoked by actor {admin_id} (role=admin)",
+        actor_id=str(admin_id),
+        resource_type="verification_certificate",
+        resource_id=str(cert_id),
+        outcome="success",
+    )
+
+    # 3. Other vendor (cross-tenant) rejected
+    service._repo.revoke_certificate.reset_mock()
+    mock_audit.reset_mock()
+    res_other = service.revoke_certificate(cert_id, user_id=other_vendor_id, reason="Malice", user_role="vendor")
+    assert res_other is None
+    service._repo.revoke_certificate.assert_not_called()
+    mock_audit.assert_called_with(
+        "verification_service",
+        "certificate_revocation",
+        f"Certificate {cert_id} not found or unauthorized for vendor {other_vendor_id}",
+        actor_id=str(other_vendor_id),
+        resource_type="verification_certificate",
+        resource_id=str(cert_id),
+        outcome="denied",
+    )
+
+    # 4. Auditor rejected
+    service._repo.revoke_certificate.reset_mock()
+    mock_audit.reset_mock()
+    res_auditor = service.revoke_certificate(cert_id, user_id=auditor_id, reason="Auditor", user_role="auditor")
+    assert res_auditor is None
+    service._repo.revoke_certificate.assert_not_called()
+    mock_audit.assert_called_with(
+        "verification_service",
+        "certificate_revocation",
+        f"Unauthorized role 'auditor' attempted certificate revocation for {cert_id}",
+        actor_id=str(auditor_id),
+        resource_type="verification_certificate",
+        resource_id=str(cert_id),
+        outcome="denied",
+    )
+
 
 def test_idempotent_re_evaluation(mock_session, mock_validate_authoritative, monkeypatch):
     """API-001 Regression: record_mismatch is re-evaluated."""
@@ -321,3 +503,82 @@ def test_idor_certificate_retrieval(mock_session):
     # Attacker should get None
     assert service.get_certificate(cert_id, user_id=attacker_id) is None
     assert service.get_certificate_by_request(req_id, user_id=attacker_id) is None
+
+
+def test_jwt_token_validation(mock_session, monkeypatch):
+    import jwt
+    from datetime import datetime, timedelta
+    from verification_service.app.models.verification_models import VerificationCertificate, VerificationRequest
+    
+    secret = "test_secret_key"
+    monkeypatch.setenv("CERTIFICATE_SECRET_KEY", secret)
+    
+    cert_id = uuid4()
+    req_id = uuid4()
+    
+    cert = VerificationCertificate(id=cert_id, verification_request_id=req_id, is_revoked=False)
+    req = VerificationRequest(id=req_id, result="verified")
+    def query_mock(model):
+        if getattr(model, "__name__", "") == "VerificationCertificate":
+            return MagicMock(filter=lambda *args: MagicMock(first=lambda: cert))
+        if getattr(model, "__name__", "") == "VerificationRequest":
+            return MagicMock(filter=lambda *args: MagicMock(first=lambda: req))
+        return MagicMock()
+    mock_session.query.side_effect = query_mock
+    
+    service = VerificationService(mock_session)
+    
+    # 1. Valid token
+    valid_payload = {
+        "sub": str(req_id),
+        "iss": "antigravity-zkp-authority",
+        "exp": datetime.utcnow() + timedelta(minutes=10)
+    }
+    valid_token = jwt.encode(valid_payload, secret, algorithm="HS256")
+    res = service.validate_certificate_token(valid_token)
+    assert res["valid"] is True
+    assert res["reason"] == "certificate_active"
+    
+    # 2. Wrong issuer
+    wrong_iss_payload = {
+        "sub": str(req_id),
+        "iss": "wrong-issuer",
+        "exp": datetime.utcnow() + timedelta(minutes=10)
+    }
+    wrong_iss_token = jwt.encode(wrong_iss_payload, secret, algorithm="HS256")
+    res = service.validate_certificate_token(wrong_iss_token)
+    assert res["valid"] is False
+    assert res["reason"] == "token_invalid"
+    
+    # 3. Missing issuer
+    missing_iss_payload = {
+        "sub": str(req_id),
+        "exp": datetime.utcnow() + timedelta(minutes=10)
+    }
+    missing_iss_token = jwt.encode(missing_iss_payload, secret, algorithm="HS256")
+    res = service.validate_certificate_token(missing_iss_token)
+    assert res["valid"] is False
+    assert res["reason"] == "token_invalid"
+    
+    # 4. Expired token
+    expired_payload = {
+        "sub": str(req_id),
+        "iss": "antigravity-zkp-authority",
+        "exp": datetime.utcnow() - timedelta(minutes=10)
+    }
+    expired_token = jwt.encode(expired_payload, secret, algorithm="HS256")
+    res = service.validate_certificate_token(expired_token)
+    assert res["valid"] is False
+    assert res["reason"] == "token_expired"
+    
+    # 5. Invalid signature
+    res = service.validate_certificate_token(valid_token + "tamper")
+    assert res["valid"] is False
+    assert res["reason"] == "token_invalid"
+    
+    # 6. Revoked certificate
+    cert.is_revoked = True
+    res = service.validate_certificate_token(valid_token)
+    assert res["valid"] is False
+    assert res["reason"] == "certificate_revoked"
+

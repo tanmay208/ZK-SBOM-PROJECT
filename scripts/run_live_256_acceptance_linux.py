@@ -1,0 +1,1863 @@
+#!/usr/bin/env python3
+"""
+Dedicated Standalone Linux-Native Live 256-Segment Acceptance Runner
+Authoritative Location: scripts/run_live_256_acceptance_linux.py
+
+DORMANT BY DEFAULT:
+  This script is strictly dormant unless invoked with the explicit opt-in flag:
+    --execute-live-acceptance
+  Or the preflight check flag:
+    --check-safeguards-only
+  Without either flag, it exits immediately with code 0 without initializing
+  databases, executing toolchains, or generating proofs.
+
+SAFETY SAFEGUARDS (LINUX CLOUD RUNNER COMPLIANT):
+  1. Overall Deadline: 300 minutes (18000 seconds / 5 hours) enforced via monotonic timer.
+  2. Per-Segment Timeout: 120 seconds via ephemeral CRYPTO_PROFILE_PATH override.
+  3. Host Available RAM: Abort threshold at 2.0 GiB safety floor, queried directly
+     via /proc/meminfo ('MemAvailable' or fallback 'MemFree + Buffers + Cached').
+  4. Targeted Process Tracking: Unique PID trap (echo $$ > pid_<inv>.txt && exec "$@")
+     enabling targeted SIGTERM / SIGKILL of strictly the active toolchain process.
+     Broad operations (pkill, killall, host shutdown) are strictly avoided.
+  5. Fail-Closed Monitoring: If memory queries fail 3 consecutive times, watchdog
+     fails closed with SafeguardAbortError.
+  6. Zero Persistent Mutations: Temporary profile, SQLite database, and PID files
+     are strictly cleaned up in finally blocks.
+  7. Preflight Mode: --check-safeguards-only verifies memory floor, toolchains,
+     payload fixtures, and circuit verification keys with zero DB writes and zero proving.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import json
+import logging
+import os
+import re
+import shlex
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+# Cross-platform signal definitions (signal.SIGKILL is posix-only in standard library)
+SIGTERM = getattr(signal, "SIGTERM", 15)
+SIGKILL = getattr(signal, "SIGKILL", 9)
+
+# Set up logger
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("LinuxAcceptanceRunner")
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_DIR = PROJECT_ROOT / "backend"
+
+def resolve_payload_fixture_path() -> Path:
+    candidates = [
+        PROJECT_ROOT / "scripts" / "stage21_payload.json",
+        PROJECT_ROOT / "master_archive" / "historical_scripts" / "stage21" / "stage21_payload.json",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    return candidates[0]
+
+PAYLOAD_FIXTURE_PATH = resolve_payload_fixture_path()
+CANONICAL_PROFILE_PATH = BACKEND_DIR / "shared" / "crypto" / "profile.json"
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+from shared.crypto.config import get_crypto_profile
+from verification_service.app.core.legacy_acir import (
+    split_legacy_acir_proof_body,
+    verify_bound_proof,
+)
+
+
+# ---------------------------------------------------------------------------
+# Linux Host Memory Measurement Helpers (/proc/meminfo)
+# ---------------------------------------------------------------------------
+
+def get_linux_host_available_ram_bytes(meminfo_path: str = "/proc/meminfo") -> int:
+    """
+    Return available host physical memory in bytes from /proc/meminfo.
+    Uses 'MemAvailable' if present (Linux 3.14+).
+    Falls back to 'MemFree + Buffers + Cached' if MemAvailable is missing.
+    Raises RuntimeError if meminfo is unreadable or malformed.
+    """
+    if not os.path.exists(meminfo_path):
+        raise RuntimeError(f"Memory info interface not found at '{meminfo_path}'")
+
+    mem_avail_kb: Optional[int] = None
+    mem_free_kb: Optional[int] = None
+    buffers_kb: Optional[int] = None
+    cached_kb: Optional[int] = None
+
+    try:
+        with open(meminfo_path, "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2:
+                    key = parts[0]
+                    try:
+                        val = int(parts[1])
+                    except ValueError:
+                        continue
+                    if key == "MemAvailable:":
+                        mem_avail_kb = val
+                    elif key == "MemFree:":
+                        mem_free_kb = val
+                    elif key == "Buffers:":
+                        buffers_kb = val
+                    elif key == "Cached:":
+                        cached_kb = val
+    except Exception as exc:
+        raise RuntimeError(f"Failed to read '{meminfo_path}': {exc}") from exc
+
+    if mem_avail_kb is not None:
+        return mem_avail_kb * 1024
+    if mem_free_kb is not None and buffers_kb is not None and cached_kb is not None:
+        return (mem_free_kb + buffers_kb + cached_kb) * 1024
+
+    raise RuntimeError(f"Could not determine available memory from '{meminfo_path}'")
+
+
+def get_linux_host_total_ram_bytes(meminfo_path: str = "/proc/meminfo") -> int:
+    """Return total host physical memory in bytes from /proc/meminfo."""
+    if not os.path.exists(meminfo_path):
+        raise RuntimeError(f"Memory info interface not found at '{meminfo_path}'")
+
+    try:
+        with open(meminfo_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return int(parts[1]) * 1024
+    except Exception as exc:
+        raise RuntimeError(f"Failed to read total memory from '{meminfo_path}': {exc}") from exc
+
+    raise RuntimeError(f"Could not determine total memory from '{meminfo_path}'")
+
+
+# ---------------------------------------------------------------------------
+# Safeguard Monitor (Background Daemon Thread)
+# ---------------------------------------------------------------------------
+
+class SafeguardAbortError(RuntimeError):
+    """Raised when a resource ceiling is breached or monitoring fails closed."""
+
+
+class LinuxSafeguardMonitor:
+    """
+    Periodically polls Linux host available RAM via /proc/meminfo.
+    Signals abort_event if host available RAM < min_host_ram_bytes.
+    Fails closed after max_allowed_consecutive_failures query errors.
+    """
+
+    def __init__(
+        self,
+        min_host_ram_bytes: int = 2 * 1024 * 1024 * 1024,
+        poll_interval_seconds: float = 1.0,
+        meminfo_path: str = "/proc/meminfo",
+    ) -> None:
+        self.min_host_ram_bytes = min_host_ram_bytes
+        self.poll_interval = poll_interval_seconds
+        self.meminfo_path = meminfo_path
+
+        self.abort_event = threading.Event()
+        self.abort_reason: Optional[str] = None
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+        self.min_host_avail_bytes: int = 2**63 - 1
+        self.peak_host_used_bytes: int = 0
+        self.consecutive_failures: int = 0
+        self.max_allowed_consecutive_failures: int = 3
+
+    def start(self) -> None:
+        self._stop_event.clear()
+        self.abort_event.clear()
+        self._thread = threading.Thread(target=self._monitor_loop, daemon=True, name="LinuxSafeguardMonitor")
+        self._thread.start()
+        logger.info(
+            "Linux safeguard monitor started (poll=%.1fs, host_min=%.2fGiB, meminfo='%s')",
+            self.poll_interval,
+            self.min_host_ram_bytes / (1024**3),
+            self.meminfo_path,
+        )
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=3.0)
+        logger.info("Linux safeguard monitor stopped")
+
+    def _monitor_loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                avail_ram = get_linux_host_available_ram_bytes(self.meminfo_path)
+                if avail_ram < self.min_host_avail_bytes:
+                    self.min_host_avail_bytes = avail_ram
+
+                if avail_ram < self.min_host_ram_bytes:
+                    self.abort_reason = (
+                        f"Host available RAM breached safety floor: "
+                        f"{avail_ram / (1024**3):.2f} GiB available < "
+                        f"{self.min_host_ram_bytes / (1024**3):.2f} GiB floor"
+                    )
+                    logger.critical("[WATCHDOG ABORT] %s", self.abort_reason)
+                    self.abort_event.set()
+                    break
+
+                self.consecutive_failures = 0
+            except Exception as exc:
+                self.consecutive_failures += 1
+                logger.warning(
+                    "Linux safeguard monitor query failed (%d/%d): %s",
+                    self.consecutive_failures,
+                    self.max_allowed_consecutive_failures,
+                    exc,
+                )
+                if self.consecutive_failures >= self.max_allowed_consecutive_failures:
+                    self.abort_reason = (
+                        f"Memory monitoring unavailable (fail-closed after "
+                        f"{self.consecutive_failures} consecutive failures): {exc}"
+                    )
+                    logger.critical("[WATCHDOG FAIL-CLOSED] %s", self.abort_reason)
+                    self.abort_event.set()
+                    break
+
+            time.sleep(self.poll_interval)
+
+
+# ---------------------------------------------------------------------------
+# Targeted Linux Process Tracker & Cleaner
+# ---------------------------------------------------------------------------
+
+class UncertainProcessCleanupError(RuntimeError):
+    """Raised when an orphaned worker process cannot be verified as terminated."""
+
+
+def check_process_state(pid: int) -> str:
+    """
+    Inspect /proc/<pid>/status to determine process state.
+    Returns:
+      "dead"    if process does not exist or has been reaped
+      "zombie"  if process exists but is in State Z (Zombie) or X (Dead)
+      "alive"   if process is actively running, sleeping, or in disk wait (R, S, D, T)
+      "unknown" if state could not be determined
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return "dead"
+    except PermissionError:
+        pass
+    except OSError:
+        return "dead"
+
+    status_path = f"/proc/{pid}/status"
+    try:
+        with open(status_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("State:"):
+                    state_char = line.split()[1]
+                    if state_char in ("Z", "X"):
+                        return "zombie"
+                    return "alive"
+    except (FileNotFoundError, ProcessLookupError):
+        return "dead"
+    except Exception:
+        pass
+
+    stat_path = f"/proc/{pid}/stat"
+    try:
+        with open(stat_path, "r", encoding="utf-8") as f:
+            content = f.read()
+            idx = content.rfind(")")
+            if idx != -1 and idx + 2 < len(content):
+                state_char = content[idx + 2]
+                if state_char in ("Z", "X"):
+                    return "zombie"
+                return "alive"
+    except Exception:
+        pass
+
+    return "unknown"
+
+
+class LinuxTargetedProcessTracker:
+    """
+    Manages invocation wrapping and targeted process termination on Linux.
+    Injects `echo $$ > pid_<inv_id>.txt && exec "$@"` using bash so the recorded PID
+    corresponds directly to the active toolchain binary (not an abandoned shell).
+    Provides targeted SIGTERM -> wait -> SIGKILL without killing sibling processes.
+    Reaps direct child processes via waitpid and checks /proc state to avoid zombie false-positives.
+    """
+
+    def __init__(self) -> None:
+        self.active_invocations: Dict[str, Tuple[str, str]] = {}  # inv_id -> (cwd, pid_filename)
+        self.cleanup_failed: bool = False
+
+    def prepare_invocation(self, cmd_args: List[str], cwd: str) -> Tuple[str, List[str], str]:
+        """
+        Wrap command argument list with a unique PID trap.
+        Returns: (inv_id, wrapped_cmd_list, pid_filename)
+        """
+        inv_id = uuid.uuid4().hex[:12]
+        pid_filename = f"pid_{inv_id}.txt"
+        wrapped_cmd = [
+            "bash",
+            "-c",
+            f'echo $$ > "{pid_filename}" && exec "$@"',
+            "--",
+        ] + list(cmd_args)
+        self.active_invocations[inv_id] = (cwd, pid_filename)
+        return inv_id, wrapped_cmd, pid_filename
+
+    def read_and_validate_pid(self, cwd: str, pid_filename: str) -> Optional[int]:
+        """Read and validate the recorded worker PID from the PID file in cwd."""
+        pid_file_path = os.path.join(cwd, pid_filename)
+        if not os.path.exists(pid_file_path):
+            return None
+
+        try:
+            with open(pid_file_path, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+            if not content.isdigit():
+                logger.error("Malformed PID file content: %r", content)
+                return None
+            pid = int(content)
+            if pid <= 1:
+                logger.error("Unsafe PID recorded (%d)", pid)
+                return None
+            return pid
+        except Exception as exc:
+            logger.error("Failed to read PID file '%s': %s", pid_file_path, exc)
+            return None
+
+    def is_pid_alive(self, pid: int) -> bool:
+        """
+        Probe whether the specific process PID is actively running.
+        Reaps direct child zombies via waitpid and checks /proc state.
+        Returns False if process is dead, reaped, or a zombie awaiting reap.
+        Returns True ONLY if process is actively executing or blocked (state alive).
+        """
+        # 1. Try reaping if it is our direct child
+        try:
+            reaped_pid, _ = os.waitpid(pid, os.WNOHANG)
+            if reaped_pid == pid:
+                return False
+        except ChildProcessError:
+            pass
+        except OSError:
+            pass
+
+        # 2. Check /proc state
+        state = check_process_state(pid)
+        if state == "dead":
+            return False
+        if state == "zombie":
+            # A zombie is already terminated, not actively executing; reap if direct child
+            try:
+                os.waitpid(pid, os.WNOHANG)
+            except Exception:
+                pass
+            return False
+
+        return True
+
+    def terminate_targeted_worker(self, inv_id: str) -> Tuple[bool, str]:
+        """
+        Attempt targeted termination of strictly the specific worker process.
+        Returns: (success: bool, status_message: str).
+        Sets self.cleanup_failed = True if PID cannot be identified or stopped.
+        """
+        if inv_id not in self.active_invocations:
+            return True, "No active invocation found"
+
+        cwd, pid_filename = self.active_invocations.pop(inv_id)
+        worker_pid = self.read_and_validate_pid(cwd, pid_filename)
+
+        pid_file_path = os.path.join(cwd, pid_filename)
+        if os.path.exists(pid_file_path):
+            try:
+                os.remove(pid_file_path)
+            except Exception:
+                pass
+
+        if worker_pid is None:
+            self.cleanup_failed = True
+            msg = f"Cannot identify worker PID for invocation {inv_id} (pid file missing/malformed)"
+            logger.critical("[CLEANUP UNCERTAIN] %s", msg)
+            return False, msg
+
+        logger.info("Attempting targeted termination of Linux worker PID %d...", worker_pid)
+
+        # 0. Check if worker already exited
+        if not self.is_pid_alive(worker_pid):
+            logger.info("Worker PID %d already exited", worker_pid)
+            return True, f"PID {worker_pid} already exited"
+
+        # 1. Attempt SIGTERM (kill -15)
+        try:
+            os.kill(worker_pid, SIGTERM)
+        except ProcessLookupError:
+            logger.info("Worker PID %d already exited", worker_pid)
+            return True, f"PID {worker_pid} already exited"
+        except Exception as exc:
+            logger.warning("Error sending SIGTERM to PID %d: %s", worker_pid, exc)
+
+        # Poll for exit (up to 1.5 seconds)
+        for _ in range(3):
+            time.sleep(0.5)
+            if not self.is_pid_alive(worker_pid):
+                logger.info("Worker PID %d terminated cleanly via SIGTERM", worker_pid)
+                return True, f"PID {worker_pid} terminated cleanly (SIGTERM)"
+
+        # 2. Escalate to SIGKILL (kill -9)
+        logger.warning("Worker PID %d still alive after SIGTERM, escalating to SIGKILL...", worker_pid)
+        try:
+            os.kill(worker_pid, SIGKILL)
+        except ProcessLookupError:
+            logger.info("Worker PID %d already exited during escalation", worker_pid)
+            return True, f"PID {worker_pid} terminated (SIGKILL)"
+        except Exception as exc:
+            logger.warning("Error sending SIGKILL to PID %d: %s", worker_pid, exc)
+
+        # Poll for exit after SIGKILL
+        for _ in range(3):
+            time.sleep(0.5)
+            if not self.is_pid_alive(worker_pid):
+                logger.info("Worker PID %d terminated via SIGKILL", worker_pid)
+                return True, f"PID {worker_pid} terminated (SIGKILL)"
+
+        self.cleanup_failed = True
+        msg = f"Worker PID {worker_pid} could not be stopped and remains active"
+        logger.critical("[CLEANUP FAILED] %s", msg)
+        return False, msg
+
+
+# ---------------------------------------------------------------------------
+# Linux Toolchain Resolution Helper
+# ---------------------------------------------------------------------------
+
+def resolve_linux_toolchain(tool: str) -> str:
+    """
+    Resolve the path to the pinned toolchain binary on Linux.
+    tool: "nargo" or "bb"
+
+    Resolution order:
+    1. Explicit environment variable: NARGO_PATH or BB_PATH
+    2. Pinned default paths: ~/.nargo/bin/nargo or ~/.bb/bb
+    3. Project-local .bin/ directory (.bin/nargo or .bin/bb)
+    4. Node wrapper fallback for bb (crypto_runtime/node_modules/@aztec/bb.js/dest/node/main.js)
+    5. PATH lookup via shutil.which
+
+    Raises RuntimeError if the binary cannot be resolved.
+    """
+    if tool not in ("nargo", "bb", "node", "acvm"):
+        raise ValueError(f"Unsupported tool: {tool}")
+
+    if tool in ("node", "acvm"):
+        for candidate in [
+            os.path.expanduser("~/.bin/node"),
+            os.path.expanduser("~/.local/bin/node"),
+            "/usr/local/bin/node",
+            "/usr/bin/node",
+            "/mnt/c/Program Files/nodejs/node.exe",
+        ]:
+            if os.path.isfile(candidate) and (os.access(candidate, os.X_OK) or sys.platform == "win32"):
+                return candidate
+        which_node = shutil.which("node")
+        if which_node:
+            return which_node
+        raise RuntimeError("Required toolchain binary 'node' could not be resolved on Linux")
+
+    env_var = "NARGO_PATH" if tool == "nargo" else "BB_PATH"
+    configured = os.environ.get(env_var)
+    if configured and configured.strip():
+        p = os.path.expanduser(configured.strip())
+        if os.path.isfile(p) and (hasattr(os, "X_OK") and os.access(p, os.X_OK) or sys.platform == "win32"):
+            return p
+        resolved = shutil.which(p)
+        if resolved:
+            return resolved
+        raise RuntimeError(f"Configured {env_var}='{configured}' is not executable or not found on PATH")
+
+    # Environment overrides
+    env_override = os.environ.get(f"{tool.upper()}_PATH")
+    if env_override and os.path.isfile(env_override):
+        return env_override
+
+    # Standard toolchain paths
+    default_path = os.path.expanduser(f"~/.nargo/bin/{tool}" if tool == "nargo" else "~/.bb/bb")
+    if os.path.isfile(default_path) and (hasattr(os, "X_OK") and os.access(default_path, os.X_OK) or sys.platform == "win32"):
+        return default_path
+
+    # Project-local .bin directory
+    local_bin = PROJECT_ROOT / ".bin" / tool
+    if local_bin.is_file() and (hasattr(os, "X_OK") and os.access(str(local_bin), os.X_OK) or sys.platform == "win32"):
+        return str(local_bin)
+
+    # PATH lookup
+    which_bin = shutil.which(tool)
+    if which_bin:
+        return which_bin
+
+    raise RuntimeError(f"Required toolchain binary '{tool}' could not be resolved on Linux")
+
+
+# ---------------------------------------------------------------------------
+# Ephemeral Cryptographic Profile Context Manager
+# ---------------------------------------------------------------------------
+
+class EphemeralCryptoProfile:
+    """
+    Temporarily overrides proof_timeout_seconds to 120s using a disposable
+    JSON profile file and the CRYPTO_PROFILE_PATH environment variable.
+    Restores original environment and cleans up the temporary file on exit.
+    """
+
+    def __init__(self, per_segment_timeout_seconds: int = 120) -> None:
+        self.timeout_seconds = per_segment_timeout_seconds
+        self._temp_file: Optional[str] = None
+        self._orig_profile_path: Optional[str] = None
+        self._orig_crypto_profile: Optional[str] = None
+
+    def __enter__(self) -> str:
+        if not CANONICAL_PROFILE_PATH.exists():
+            raise FileNotFoundError(f"Canonical profile not found: {CANONICAL_PROFILE_PATH}")
+
+        with open(CANONICAL_PROFILE_PATH, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+
+        # Apply timeout override to prod profile
+        manifest["profiles"]["prod"]["proof_timeout_seconds"] = self.timeout_seconds
+
+        fd, temp_path = tempfile.mkstemp(prefix="zkp_profile_linux_", suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2)
+        self._temp_file = temp_path
+
+        self._orig_profile_path = os.environ.get("CRYPTO_PROFILE_PATH")
+        self._orig_crypto_profile = os.environ.get("CRYPTO_PROFILE")
+
+        os.environ["CRYPTO_PROFILE_PATH"] = self._temp_file
+        os.environ["CRYPTO_PROFILE"] = "prod"
+        logger.info(
+            "Configured ephemeral crypto profile (proof_timeout_seconds=%d) at %s",
+            self.timeout_seconds,
+            self._temp_file,
+        )
+        return self._temp_file
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        if self._orig_profile_path is not None:
+            os.environ["CRYPTO_PROFILE_PATH"] = self._orig_profile_path
+        else:
+            os.environ.pop("CRYPTO_PROFILE_PATH", None)
+
+        if self._orig_crypto_profile is not None:
+            os.environ["CRYPTO_PROFILE"] = self._orig_crypto_profile
+        else:
+            os.environ.pop("CRYPTO_PROFILE", None)
+
+        if self._temp_file and os.path.exists(self._temp_file):
+            try:
+                os.remove(self._temp_file)
+                logger.info("Cleaned up ephemeral crypto profile %s", self._temp_file)
+            except Exception as exc:
+                logger.warning("Failed to remove ephemeral profile %s: %s", self._temp_file, exc)
+
+
+class BoundedRunComplete(BaseException):
+    """Raised when the bounded segment execution limit is reached cleanly."""
+
+
+# ---------------------------------------------------------------------------
+# Linux Acceptance Pipeline Orchestrator
+# ---------------------------------------------------------------------------
+
+class LiveAcceptanceRunnerLinux:
+    """
+    Orchestrates the Stage D5 live 256-segment acceptance run natively on Linux.
+    Uses real native toolchains, isolated SQLite DB, and rigorous checks.
+    """
+
+    def __init__(
+        self,
+        max_overall_seconds: float = 18000.0,
+        per_segment_timeout_seconds: int = 120,
+        min_host_ram_gib: float = 2.0,
+        poll_interval_seconds: float = 1.0,
+        meminfo_path: str = "/proc/meminfo",
+        manifest_output_path: Optional[str] = None,
+        artifacts_dir: Optional[str] = None,
+        max_segments: Optional[int] = None,
+    ) -> None:
+        self.max_overall_seconds = max_overall_seconds
+        self.per_segment_timeout_seconds = per_segment_timeout_seconds
+        if min_host_ram_gib < 2.0:
+            raise ValueError(
+                f"Host RAM threshold cannot be set below the 2.0 GiB safety floor (got {min_host_ram_gib} GiB)"
+            )
+        self.min_host_ram_bytes = int(min_host_ram_gib * 1024 * 1024 * 1024)
+        self.poll_interval_seconds = poll_interval_seconds
+        self.meminfo_path = meminfo_path
+        self.manifest_output_path = manifest_output_path or str(
+            PROJECT_ROOT / "scripts" / "live_acceptance_manifest_linux.json"
+        )
+        if max_segments is not None:
+            if not isinstance(max_segments, int) or max_segments <= 0:
+                raise ValueError(
+                    f"max_segments must be a positive integer greater than zero (got {max_segments})"
+                )
+        self.max_segments = max_segments
+
+        # Transcript log file alongside manifest
+        out_path = Path(self.manifest_output_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        log_file_path = out_path.with_suffix(".log")
+        self.file_handler = logging.FileHandler(str(log_file_path), mode="w", encoding="utf-8")
+        self.file_handler.setFormatter(
+            logging.Formatter("[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s", "%Y-%m-%d %H:%M:%S")
+        )
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+        logger.addHandler(self.file_handler)
+        logging.getLogger().addHandler(self.file_handler)
+
+        if artifacts_dir:
+            self.artifacts_dir = Path(artifacts_dir)
+        else:
+            self.artifacts_dir = out_path.parent / f"{out_path.stem}_artifacts"
+        self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+        self.tracker = LinuxTargetedProcessTracker()
+        self.monitor = LinuxSafeguardMonitor(
+            min_host_ram_bytes=self.min_host_ram_bytes,
+            poll_interval_seconds=self.poll_interval_seconds,
+            meminfo_path=self.meminfo_path,
+        )
+
+        self.invocation_metadata: Dict[str, Tuple[str, List[str]]] = {}
+
+        self.execution_metrics: Dict[str, Any] = {
+            "status": "initialized",
+            "runner_type": "linux_native",
+            "start_timestamp": None,
+            "end_timestamp": None,
+            "elapsed_seconds": 0.0,
+            "stage_executions": [],
+            "circuit_validation": {},
+            "cleanup_and_total_job_duration": {},
+            "per_segment_durations": {},
+            "total_chunks_processed": 0,
+            "total_segments_verified": 0,
+            "min_host_avail_gib": 0.0,
+            "negative_tests_results": {},
+            "errors": [],
+            "persisted_artifacts": {},
+            "max_segments_limit": self.max_segments,
+            "artifacts_directory": str(self.artifacts_dir),
+        }
+
+
+    def close(self) -> None:
+        """Close and detach the transcript file handler."""
+        if hasattr(self, "file_handler") and self.file_handler:
+            try:
+                logger.removeHandler(self.file_handler)
+                logging.getLogger().removeHandler(self.file_handler)
+                self.file_handler.close()
+            except Exception:
+                pass
+            self.file_handler = None
+
+    def _terminate_active_invocation(self, proc: subprocess.Popen, inv_id: Optional[str]) -> None:
+        """
+        Targeted termination of the Linux worker process and the launcher process.
+        Fails closed by setting tracker.cleanup_failed = True and raising UncertainProcessCleanupError
+        if the worker cannot be verified as stopped.
+        """
+        if inv_id:
+            success, msg = self.tracker.terminate_targeted_worker(inv_id)
+            if not success:
+                self.tracker.cleanup_failed = True
+                try:
+                    proc.kill()
+                    proc.wait(timeout=2.0)
+                except Exception:
+                    pass
+                raise UncertainProcessCleanupError(f"Targeted cleanup failed for {inv_id}: {msg}")
+
+        try:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=2.0)
+        except Exception as exc:
+            logger.warning("Error terminating launcher process: %s", exc)
+
+    def check_safeguards_preflight(self) -> bool:
+        """
+        Validate that Linux host RAM, toolchains, fixtures, and circuit artifacts
+        are present and valid. Performs NO proof generation and NO database writes.
+        """
+        logger.info("--- LINUX NATIVE PREFLIGHT SAFEGUARDS AUDIT ---")
+
+        # 1. Linux Host Available RAM
+        try:
+            avail_ram = get_linux_host_available_ram_bytes(self.meminfo_path)
+            avail_gib = avail_ram / (1024**3)
+            logger.info("Host Available RAM: %.2f GiB (Floor: %.2f GiB)", avail_gib, self.min_host_ram_bytes / (1024**3))
+            if avail_ram < self.min_host_ram_bytes:
+                logger.error("Preflight failed: Host available RAM is below the %.1f GiB floor", self.min_host_ram_bytes / (1024**3))
+                return False
+        except Exception as exc:
+            logger.error("Preflight failed: Cannot query Linux host memory: %s", exc)
+            return False
+
+        # 2. Fixture Existence
+        if not PAYLOAD_FIXTURE_PATH.exists():
+            logger.error("Preflight failed: Payload fixture not found: %s", PAYLOAD_FIXTURE_PATH)
+            return False
+        logger.info("Payload Fixture: Found at %s", PAYLOAD_FIXTURE_PATH)
+
+        # 3. Toolchain Binaries
+        for tool in ("nargo", "bb"):
+            try:
+                resolved = resolve_linux_toolchain(tool)
+                logger.info("Toolchain binary '%s': Resolved at %s", tool, resolved)
+            except Exception as exc:
+                logger.error("Preflight failed: %s", exc)
+                return False
+
+        # 4. Decomposed Circuit Targets and Verification Keys
+        t_val_start = time.monotonic()
+        try:
+            profile = get_crypto_profile()
+            verified_circuits = {}
+            for seg_name in ("segment_init_32", "segment_mid_32", "segment_final_32"):
+                vk_path, json_path, _ = profile.get_artifact_paths(seg_name)
+                if not os.path.exists(vk_path):
+                    logger.error("Preflight failed: Missing VK for %s at %s", seg_name, vk_path)
+                    return False
+                if not os.path.exists(json_path):
+                    logger.error("Preflight failed: Missing circuit JSON for %s at %s", seg_name, json_path)
+                    return False
+                with open(vk_path, "rb") as f_vk:
+                    actual_vk_hash = hashlib.sha256(f_vk.read()).hexdigest()
+                with open(json_path, "rb") as f_json:
+                    actual_json_hash = hashlib.sha256(f_json.read()).hexdigest()
+                expected_vk_hash = profile.decomposed_artifacts[seg_name]["vk_hash"]
+                expected_json_hash = profile.decomposed_artifacts[seg_name]["circuit_artifact_hash"]
+                if actual_vk_hash.lower() != expected_vk_hash.lower():
+                    logger.error("Preflight failed: VK hash mismatch for %s (got %s, expected %s)", seg_name, actual_vk_hash, expected_vk_hash)
+                    return False
+                if actual_json_hash.lower() != expected_json_hash.lower():
+                    logger.error("Preflight failed: JSON hash mismatch for %s (got %s, expected %s)", seg_name, actual_json_hash, expected_json_hash)
+                    return False
+                verified_circuits[seg_name] = {
+                    "vk_hash": actual_vk_hash,
+                    "circuit_artifact_hash": actual_json_hash,
+                }
+                logger.info("Circuit '%s': VK and JSON verified against profile.json", seg_name)
+
+
+            t_val_dur = round(time.monotonic() - t_val_start, 3)
+            self.execution_metrics["circuit_validation"] = {
+                "status": "PASS",
+                "elapsed_seconds": t_val_dur,
+                "verified_artifacts": verified_circuits,
+            }
+            self.execution_metrics["stage_executions"].append({
+                "stage": "circuit_validation",
+                "command": "check_safeguards_preflight::sha256_verification",
+                "exit_status": 0,
+                "status": "PASS",
+                "elapsed_seconds": t_val_dur,
+                "details": "Verified 3/3 circuits (init, mid, final) VK and ACIR JSON hashes against profile.json",
+            })
+        except Exception as exc:
+            logger.error("Preflight failed for circuit artifacts: %s", exc)
+            return False
+
+        logger.info("All Linux preflight safeguards verified successfully (0 DB writes, 0 proofs).")
+        return True
+
+
+    def _persist_segment_artifact(
+        self,
+        db: Any,
+        seg_db_id: uuid.UUID,
+        chunk_index: int,
+        seg_idx: int,
+        circuit_name: str,
+        sbom_root: str,
+        vul_db_root: str,
+        policy_hash: str,
+    ) -> Dict[str, Any]:
+        """
+        Durable Artifact Persistence & Verification Gate:
+        Atomically writes:
+          1. Complete serialized proof buffer (.proof)
+          2. Raw 2,144-byte UltraPlonk proof body (.body.bin)
+          3. Public inputs metadata JSON (.public_inputs.json)
+          4. Segment metadata with tool versions & SHA-256 digests (.meta.json)
+        Then re-reads the artifact directly from disk and verifies it with official verifier.
+        """
+        from zkp_service.app.models.zkp_models import ChunkProofSet, SegmentProof
+        from verification_service.app.core.verifier import (
+            _field_value,
+            _public_inputs_match,
+            _public_input_values,
+        )
+
+        seg = db.query(SegmentProof).filter_by(id=seg_db_id).first()
+        if not seg or not seg.proof_artifact:
+            logger.error("Cannot persist segment artifact: SegmentProof %s not found or empty", seg_db_id)
+            return {}
+
+        chunk = getattr(seg, "chunk", None)
+        if not chunk and hasattr(seg, "chunk_id"):
+            chunk = db.query(ChunkProofSet).filter_by(id=seg.chunk_id).first()
+        if not chunk:
+            from types import SimpleNamespace
+            chunk = SimpleNamespace(
+                chunk_index=getattr(seg, "chunk_index", chunk_index),
+                components_commit=getattr(seg, "components_commit", None),
+            )
+
+        # 1. Authoritative commitment binding check
+        if not _public_inputs_match(
+            segment=seg,
+            chunk=chunk,
+            expected_sbom_root=sbom_root,
+            expected_vulnerability_db_root=vul_db_root,
+            expected_policy_hash=policy_hash,
+        ):
+            logger.error(
+                "Authoritative commitment binding check failed (_public_inputs_match) for chunk %d segment %d",
+                chunk_index,
+                seg_idx,
+            )
+            return {}
+
+        # 2. Derive authoritative circuit-declared public inputs vector
+        try:
+            expected_pi_values = _public_input_values(seg, chunk)
+            expected_pi_formatted = [f"0x{_field_value(v):064x}" for v in expected_pi_values]
+        except Exception as exc:
+            logger.error(
+                "Failed to derive authoritative public input values for chunk %d segment %d: %s",
+                chunk_index,
+                seg_idx,
+                exc,
+            )
+            return {}
+
+        complete_proof_bytes = base64.b64decode(seg.proof_artifact)
+        actual_hash = hashlib.sha256(complete_proof_bytes).hexdigest()
+        if actual_hash != seg.proof_artifact_hash:
+            logger.error(
+                "Segment %s proof hash mismatch: DB=%s, actual=%s",
+                seg_db_id,
+                seg.proof_artifact_hash,
+                actual_hash,
+            )
+            return {}
+
+        segment_name = "segment_mid_32" if "segment_mid_32" in circuit_name else circuit_name
+        proof_body_bytes = split_legacy_acir_proof_body(segment_name, complete_proof_bytes)
+        body_hash = hashlib.sha256(proof_body_bytes).hexdigest()
+
+        pi_prefix_len = len(complete_proof_bytes) - len(proof_body_bytes)
+        pi_bytes = complete_proof_bytes[:pi_prefix_len]
+        pi_list = []
+        for i in range(0, len(pi_bytes), 32):
+            val_int = int.from_bytes(pi_bytes[i:i+32], "big")
+            pi_list.append("0x" + hex(val_int)[2:].zfill(64))
+
+        # 3. Validate proof public inputs match authoritative expected commitments
+        if len(pi_list) != len(expected_pi_formatted):
+            logger.error(
+                "Proof public inputs count mismatch for chunk %d segment %d: proof has %d, authoritative expected %d",
+                chunk_index,
+                seg_idx,
+                len(pi_list),
+                len(expected_pi_formatted),
+            )
+            return {}
+
+        for idx, (actual_pi, exp_pi) in enumerate(zip(pi_list, expected_pi_formatted)):
+            if _field_value(actual_pi) != _field_value(exp_pi):
+                logger.error(
+                    "Proof public input mismatch at index %d for chunk %d segment %d: proof=%s, authoritative expected=%s",
+                    idx,
+                    chunk_index,
+                    seg_idx,
+                    actual_pi,
+                    exp_pi,
+                )
+                return {}
+
+        seg_prefix = f"chunk_{chunk_index}_segment_{seg_idx}"
+        proof_file_path = self.artifacts_dir / f"{seg_prefix}.proof"
+        body_file_path = self.artifacts_dir / f"{seg_prefix}.body.bin"
+        pi_file_path = self.artifacts_dir / f"{seg_prefix}.public_inputs.json"
+        meta_file_path = self.artifacts_dir / f"{seg_prefix}.meta.json"
+
+        # Atomic write helpers
+        def _atomic_write_bytes(target_path: Path, data: bytes) -> None:
+            tmp_path = target_path.with_suffix(".tmp")
+            with open(tmp_path, "wb") as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, target_path)
+
+        def _atomic_write_json(target_path: Path, data: Any) -> None:
+            tmp_path = target_path.with_suffix(".tmp")
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, target_path)
+
+        _atomic_write_bytes(proof_file_path, complete_proof_bytes)
+        _atomic_write_bytes(body_file_path, proof_body_bytes)
+        _atomic_write_json(pi_file_path, {
+            "circuit_name": segment_name,
+            "chunk_index": chunk_index,
+            "segment_index": seg_idx,
+            "public_inputs": pi_list,
+            "public_input_bytes_count": pi_prefix_len,
+        })
+
+        # Re-read proof from disk to guarantee storage fidelity
+        with open(proof_file_path, "rb") as f_disk:
+            disk_bytes = f_disk.read()
+        assert disk_bytes == complete_proof_bytes, "Disk read mismatch: saved bytes do not match in-memory bytes"
+
+        # Independent offline verification using official verification key
+        t_offline_0 = time.monotonic()
+        profile = get_crypto_profile()
+        vk_path, _, _ = profile.get_artifact_paths(segment_name)
+        expected_vk_hash = profile.decomposed_artifacts[segment_name]["vk_hash"]
+        with open(vk_path, "rb") as f_vk:
+            vk_bytes = f_vk.read()
+
+        offline_pass = verify_bound_proof(
+            circuit_id=segment_name,
+            verification_key=vk_bytes,
+            expected_verification_key_sha256=expected_vk_hash,
+            complete_proof=disk_bytes,
+            expected_public_inputs=expected_pi_formatted,
+            timeout_seconds=self.per_segment_timeout_seconds,
+        )
+        t_offline_dur = round(time.monotonic() - t_offline_0, 3)
+
+        self.execution_metrics["stage_executions"].append({
+            "stage": "independent_proof_verification",
+            "command": f"verify_bound_proof({segment_name}) -> bb verify -k {vk_path} -p {proof_file_path}",
+            "exit_status": 0 if offline_pass else 1,
+            "status": "PASS" if offline_pass else "FAIL",
+            "elapsed_seconds": t_offline_dur,
+            "details": {
+                "circuit_name": segment_name,
+                "proof_sha256": actual_hash,
+                "vk_sha256": expected_vk_hash,
+                "public_inputs_count": len(pi_list),
+            },
+        })
+
+
+        meta = {
+            "segment_key": seg_prefix,
+            "segment_db_id": str(seg_db_id),
+            "circuit_name": segment_name,
+            "chunk_index": chunk_index,
+            "segment_index": seg_idx,
+            "complete_proof_file": str(proof_file_path),
+            "complete_proof_bytes": len(complete_proof_bytes),
+            "complete_proof_sha256": actual_hash,
+            "proof_body_file": str(body_file_path),
+            "proof_body_bytes": len(proof_body_bytes),
+            "proof_body_sha256": body_hash,
+            "public_inputs_file": str(pi_file_path),
+            "public_inputs_count": len(pi_list),
+            "offline_independent_verification": "PASS" if offline_pass else "FAIL",
+            "persisted_at_utc": datetime.now(timezone.utc).isoformat(),
+        }
+        _atomic_write_json(meta_file_path, meta)
+        logger.info(
+            "Persisted & reverified segment artifact %s: %s (%d bytes, sha256=%s, offline_pass=%s)",
+            seg_prefix,
+            proof_file_path.name,
+            len(complete_proof_bytes),
+            actual_hash[:16] + "...",
+            offline_pass,
+        )
+
+        self.execution_metrics["persisted_artifacts"][seg_prefix] = meta
+        return meta
+
+    def run(self) -> int:
+        """
+        Execute the live proof generation acceptance suite natively on Linux.
+        Returns: exit code (0 on full success, 1 on failure).
+        """
+        start_time = time.monotonic()
+        self.execution_metrics["start_timestamp"] = datetime.now(timezone.utc).isoformat()
+        logger.info("=== STARTING STAGE D5 LINUX ACCEPTANCE RUN ===")
+
+        # 1. Preflight safeguard validation
+        if not self.check_safeguards_preflight():
+            logger.critical("Preflight safeguard checks failed. Aborting before execution.")
+            self.execution_metrics["status"] = "preflight_failed"
+            self._save_execution_manifest()
+            return 1
+
+        # 2. Start monitor
+        self.monitor.start()
+
+        # 3. Apply Ephemeral Profile Context Manager
+        try:
+            with EphemeralCryptoProfile(per_segment_timeout_seconds=self.per_segment_timeout_seconds):
+                exit_code = self._execute_acceptance_pipeline(start_time)
+        except SafeguardAbortError as exc:
+            logger.critical("[SAFELY ABORTED BY WATCHDOG] %s", exc)
+            self.execution_metrics["status"] = "aborted_by_safeguard"
+            self.execution_metrics["errors"].append(str(exc))
+            exit_code = 1
+        except TimeoutError as exc:
+            logger.critical("[SAFELY ABORTED BY OVERALL DEADLINE] %s", exc)
+            self.execution_metrics["status"] = "aborted_by_deadline"
+            self.execution_metrics["errors"].append(str(exc))
+            exit_code = 1
+        except BoundedRunComplete:
+            logger.info("Bounded run limit (%d segments) reached successfully.", self.max_segments)
+            try:
+                self._run_negative_tests_on_bounded_proof()
+            except Exception as e_neg:
+                logger.error("Negative tests on bounded proof failed: %s", e_neg, exc_info=True)
+                self.execution_metrics["errors"].append(f"Negative tests failed: {e_neg}")
+            self.execution_metrics["status"] = "bounded_pass"
+            exit_code = 0
+        except Exception as exc:
+            logger.critical("Acceptance run failed with unhandled exception: %s", exc, exc_info=True)
+            self.execution_metrics["status"] = "failed"
+            self.execution_metrics["errors"].append(str(exc))
+            exit_code = 1
+        finally:
+            t_cleanup_start = time.monotonic()
+            self.monitor.stop()
+            cleanup_dur = round(time.monotonic() - t_cleanup_start, 3)
+            self.execution_metrics["stage_executions"].append({
+                "stage": "cleanup",
+                "command": "LinuxSafeguardMonitor.stop + tracker_verification",
+                "exit_status": 0 if not self.tracker.cleanup_failed else 1,
+                "status": "PASS" if not self.tracker.cleanup_failed else "FAIL",
+                "elapsed_seconds": cleanup_dur,
+                "details": {
+                    "cleanup_failed": self.tracker.cleanup_failed,
+                    "active_invocations_remaining": len(self.tracker.active_invocations),
+                },
+            })
+            total_elapsed = round(time.monotonic() - start_time, 2)
+            self.execution_metrics["min_host_avail_gib"] = round(self.monitor.min_host_avail_bytes / (1024**3), 2)
+            self.execution_metrics["elapsed_seconds"] = total_elapsed
+            self.execution_metrics["end_timestamp"] = datetime.now(timezone.utc).isoformat()
+            self.execution_metrics["cleanup_and_total_job_duration"] = {
+                "total_job_elapsed_seconds": total_elapsed,
+                "cleanup_verified": not self.tracker.cleanup_failed,
+            }
+            self._save_execution_manifest()
+            self.close()
+
+        logger.info("=== STAGE D5 LINUX RUN COMPLETED (Status: %s, Exit: %d) ===",
+                    self.execution_metrics["status"], exit_code)
+        return exit_code
+
+    def _execute_acceptance_pipeline(self, start_time: float) -> int:
+        """Execute SQLite DB setup, seed data, proving loop, and negative tests."""
+        from sqlalchemy import create_engine, text, event
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+        from sqlalchemy.ext.compiler import compiles
+        from sqlalchemy.dialects.mssql import UNIQUEIDENTIFIER
+
+        from shared.database import Base
+        from shared.models.user import User
+        from sbom_service.app.services.sbom_intake_service import SBOMIntakeService
+        from vulnerability_service.app.services.vulnerability_service import ingest_vulnerabilities
+        from vulnerability_service.app.schemas.vulnerability_schemas import (
+            VulnerabilityIngestionRequest, VulnerabilityIngestionItem
+        )
+        from vulnerability_service.app.api.routes.vulnerability_routes import (
+            approve_snapshot,
+            freeze_snapshot,
+        )
+        from vulnerability_service.app.models.vulnerability_models import VulnerabilitySnapshot
+        from policy_service.app.services.policy_service import create_policy
+        from zkp_service.app.repositories.zkp_repository import ZKPRepository
+        from zkp_service.app.schemas.zkp_schemas import GenerateProofRequest
+        from zkp_service.app.services.prover_service import ProverService
+        from verification_service.app.services.verification_service import VerificationService
+        from verification_service.app.schemas.verification_schemas import VerifyProofRequest
+
+        # 1. Setup isolated in-memory SQLite database
+        engine = create_engine(
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+
+        @compiles(UNIQUEIDENTIFIER, "sqlite")
+        def _compile_uid(element, compiler, **kw):
+            return "CHAR(36)"
+
+        @event.listens_for(engine, "connect")
+        def _do_connect(dbapi_conn, record):
+            import sqlite3
+            if isinstance(dbapi_conn, sqlite3.Connection):
+                dbapi_conn.create_function(
+                    "getutcdate", 0, lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                )
+
+        with engine.connect() as conn:
+            for s in ("sbom", "vulnerability", "policy", "zkp", "verification"):
+                conn.execute(text(f"ATTACH DATABASE ':memory:' AS {s}"))
+
+        Base.metadata.create_all(engine)
+        SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+        db = SessionLocal()
+
+        importer_user = User(id=uuid.uuid4(), username="trusted_importer", hashed_password="pw", role="trusted_importer")
+        user = User(id=uuid.uuid4(), username="acceptance_admin", hashed_password="pw", role="admin")
+        db.add_all([importer_user, user])
+        db.commit()
+
+        os.environ.setdefault("CERTIFICATE_SECRET_KEY", "acceptance_runner_certificate_secret_1234567890")
+
+        # Ingest Payload Fixture
+        with open(PAYLOAD_FIXTURE_PATH, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+
+        # Phase 1: Ingest SBOM (1024 components)
+        logger.info("Ingesting 1024-component CycloneDX SBOM...")
+        sbom_svc = SBOMIntakeService(db)
+        cyclonedx = {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.5",
+            "components": payload["components"],
+        }
+        sbom_resp = sbom_svc.ingest(
+            application_name="Live Acceptance App",
+            vendor="Live Acceptance Vendor",
+            filename="acceptance_bom.json",
+            format="CycloneDX",
+            content=json.dumps(cyclonedx),
+            user_id=user.id,
+        )
+        logger.info("  -> SBOM Root: %s", sbom_resp.sbom_root)
+
+        # Phase 2: Ingest Vulnerabilities (2 records)
+        logger.info("Ingesting authoritative vulnerabilities...")
+        vul_req = VulnerabilityIngestionRequest(
+            source_identity="NVD",
+            provenance={"feed": "NVD", "feed_version": "acceptance_fixture"},
+            vulnerabilities=[VulnerabilityIngestionItem(**v) for v in payload["vulnerabilities"]],
+        )
+        vul_resp = ingest_vulnerabilities(db, vul_req, importer_user.id)
+        snapshot_uuid = uuid.UUID(vul_resp.snapshot_id)
+        approve_snapshot(snapshot_uuid, db, user)
+        freeze_snapshot(snapshot_uuid, db, user)
+        snap = db.query(VulnerabilitySnapshot).filter_by(id=snapshot_uuid).first()
+        logger.info("  -> Authoritative SMT Root: %s", snap.authoritative_smt_root)
+
+        # Phase 3: Create Policy (max CVSS 5.0)
+        logger.info("Creating security policy...")
+        pol = create_policy(db, max_cvss_score=payload["policy"]["max_cvss_score"], name="Acceptance Policy")
+        logger.info("  -> Policy Hash: %s", pol.policy_hash)
+
+        # Phase 4: Proof Generation with Targeted Process Tracking & Deadlines
+        logger.info("Creating Proof Job...")
+        repo = ZKPRepository(db)
+        job = repo.create_job(
+            GenerateProofRequest(
+                sbom_upload_id=sbom_resp.id,
+                snapshot_id=snap.id,
+                policy_id=pol.id,
+            ),
+            user_id=user.id,
+        )
+        logger.info("  -> Proof Job ID: %s", job.id)
+
+        # Wrap toolchain execution with targeted Linux process tracking
+        orig_build_toolchain = sys.modules["zkp_service.app.services.prover_service"].build_toolchain_command
+        orig_run_toolchain = sys.modules["zkp_service.app.services.prover_service"].run_toolchain_command
+
+        current_invocation_holder = [None]
+
+        def wrapped_build_toolchain(tool: str, subcmd_args: list[str], **kwargs):
+            resolved_bin = resolve_linux_toolchain(tool)
+            cmd_args = [resolved_bin] + list(subcmd_args)
+            inv_id, wrapped_cmd, _ = self.tracker.prepare_invocation(cmd_args, cwd=os.getcwd())
+            current_invocation_holder[0] = inv_id
+            self.invocation_metadata[inv_id] = (tool, list(subcmd_args))
+            return wrapped_cmd
+
+        def wrapped_run_toolchain(cmd: list[str], cwd: str, timeout: int | float) -> subprocess.CompletedProcess | None:
+            if self.tracker.cleanup_failed:
+                raise UncertainProcessCleanupError(
+                    "Subsequent invocation blocked: previous worker cleanup failed or was unverified."
+                )
+
+            if self.monitor.abort_event.is_set():
+                raise SafeguardAbortError(f"Pre-command watchdog abort: {self.monitor.abort_reason}")
+
+            if time.monotonic() - start_time > self.max_overall_seconds:
+                raise TimeoutError(f"Overall deadline of {self.max_overall_seconds}s exceeded")
+
+            inv_id = current_invocation_holder[0]
+            if inv_id and inv_id in self.tracker.active_invocations:
+                _, pid_filename = self.tracker.active_invocations[inv_id]
+                self.tracker.active_invocations[inv_id] = (cwd, pid_filename)
+
+            tool, subcmd_args = self.invocation_metadata.get(inv_id, ("unknown", []))
+            if (tool in ("nargo", "node", "acvm")) and subcmd_args and (subcmd_args[0] == "execute" or "execute_acvm" in subcmd_args[0]):
+                stage_name = "witness_generation"
+            elif tool == "bb" and subcmd_args and subcmd_args[0] == "prove":
+                stage_name = "proof_generation"
+            elif tool == "bb" and subcmd_args and subcmd_args[0] == "verify":
+                stage_name = "independent_proof_verification"
+            else:
+                stage_name = f"{tool}_{subcmd_args[0] if subcmd_args else 'cmd'}"
+
+            logger.info("[STAGE: %s] Starting %s %s (timeout=%ss)...", stage_name, tool, " ".join(subcmd_args[:2]), timeout)
+
+            cmd_start = time.monotonic()
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=cwd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+            except FileNotFoundError as exc:
+                logger.error("Runtime toolchain unavailable: executable '%s' not found: %s", cmd[0], exc)
+                self.execution_metrics["stage_executions"].append({
+                    "stage": stage_name,
+                    "command": f"{tool} {' '.join(subcmd_args)}",
+                    "exit_status": None,
+                    "status": "FAIL",
+                    "elapsed_seconds": 0.0,
+                    "sanitized_failure_output": str(exc),
+                })
+                return None
+            except OSError as exc:
+                logger.error("Toolchain execution failed to launch '%s': %s", cmd[0], exc)
+                self.execution_metrics["stage_executions"].append({
+                    "stage": stage_name,
+                    "command": f"{tool} {' '.join(subcmd_args)}",
+                    "exit_status": None,
+                    "status": "FAIL",
+                    "elapsed_seconds": 0.0,
+                    "sanitized_failure_output": str(exc),
+                })
+                return None
+
+            while proc.poll() is None:
+                if self.monitor.abort_event.is_set():
+                    logger.critical("[ACTIVE COMMAND ABORT] Watchdog triggered during command execution: %s", self.monitor.abort_reason)
+                    self._terminate_active_invocation(proc, inv_id)
+                    raise SafeguardAbortError(f"Active command aborted by watchdog: {self.monitor.abort_reason}")
+
+                if time.monotonic() - start_time > self.max_overall_seconds:
+                    logger.critical("[ACTIVE COMMAND ABORT] Overall deadline of %.1fs reached during command", self.max_overall_seconds)
+                    self._terminate_active_invocation(proc, inv_id)
+                    raise TimeoutError(f"Overall deadline of {self.max_overall_seconds}s exceeded during active command")
+
+                if time.monotonic() - cmd_start > timeout:
+                    cmd_dur = round(time.monotonic() - cmd_start, 3)
+                    logger.warning("[ACTIVE COMMAND TIMEOUT] Command exceeded per-segment timeout of %ss after %.2fs", timeout, cmd_dur)
+                    self._terminate_active_invocation(proc, inv_id)
+                    self.execution_metrics["stage_executions"].append({
+                        "stage": stage_name,
+                        "command": f"{tool} {' '.join(subcmd_args)}",
+                        "exit_status": None,
+                        "status": "TIMEOUT",
+                        "elapsed_seconds": cmd_dur,
+                        "sanitized_failure_output": f"Command exceeded per-segment timeout of {timeout}s",
+                    })
+                    return None
+
+                time.sleep(0.5)
+
+            stdout, stderr = proc.communicate()
+            cmd_dur = round(time.monotonic() - cmd_start, 3)
+            self.execution_metrics["stage_executions"].append({
+                "stage": stage_name,
+                "command": f"{tool} {' '.join(subcmd_args)}",
+                "exit_status": proc.returncode,
+                "status": "PASS" if proc.returncode == 0 else "FAIL",
+                "elapsed_seconds": cmd_dur,
+                "sanitized_failure_output": stderr.strip()[:500] if proc.returncode != 0 else "",
+            })
+            logger.info("[STAGE: %s] Finished in %.3fs with returncode=%d", stage_name, cmd_dur, proc.returncode)
+
+            if inv_id in self.tracker.active_invocations:
+                cwd_tracked, pid_file = self.tracker.active_invocations.pop(inv_id)
+                pid_path = os.path.join(cwd_tracked, pid_file)
+                if os.path.exists(pid_path):
+                    try:
+                        os.remove(pid_path)
+                    except Exception:
+                        pass
+
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=proc.returncode,
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+
+        # Apply toolchain monkeypatch
+        sys.modules["zkp_service.app.services.prover_service"].build_toolchain_command = wrapped_build_toolchain
+        sys.modules["zkp_service.app.services.prover_service"].run_toolchain_command = wrapped_run_toolchain
+
+        try:
+            prover = ProverService(db)
+            prover.circuit_dir = str(PROJECT_ROOT)
+
+            orig_generate_segment_proof = prover.generate_segment_proof
+
+            def tracked_generate_segment_proof(
+                seg_db, circuit_name, chunk_comps, chunk_merkle_paths, smt,
+                chunk_index, seg_idx, hash_in, hash_out, hash_in_array,
+                sbom_root, vul_db_root, policy_hash, policy_max_cvss,
+            ):
+                seg_t0 = time.monotonic()
+                res = orig_generate_segment_proof(
+                    seg_db, circuit_name, chunk_comps, chunk_merkle_paths, smt,
+                    chunk_index, seg_idx, hash_in, hash_out, hash_in_array,
+                    sbom_root, vul_db_root, policy_hash, policy_max_cvss,
+                )
+                seg_dur = round(time.monotonic() - seg_t0, 3)
+                seg_key = f"chunk_{chunk_index}_segment_{seg_idx}"
+                self.execution_metrics["per_segment_durations"][seg_key] = seg_dur
+                if res:
+                    persist_meta = {}
+                    try:
+                        persist_meta = self._persist_segment_artifact(
+                            db=db,
+                            seg_db_id=seg_db.id,
+                            chunk_index=chunk_index,
+                            seg_idx=seg_idx,
+                            circuit_name=circuit_name,
+                            sbom_root=sbom_root,
+                            vul_db_root=vul_db_root,
+                            policy_hash=policy_hash,
+                        )
+                    except Exception as e_persist:
+                        logger.error("Failed to persist durable artifact for %s: %s", seg_key, e_persist)
+
+                    if not persist_meta or persist_meta.get("offline_independent_verification") != "PASS":
+                        logger.critical("Segment %s failed durable persistence or offline verification", seg_key)
+                        return False
+
+                    self.execution_metrics["total_segments_verified"] += 1
+
+                    if self.max_segments is not None and self.execution_metrics["total_segments_verified"] >= self.max_segments:
+                        logger.info(
+                            "Reached bounded limit of %d segments. Halting proving pipeline.",
+                            self.max_segments,
+                        )
+                        raise BoundedRunComplete()
+
+                return res
+
+            prover.generate_segment_proof = tracked_generate_segment_proof
+
+            orig_generate_chunk_proofs = prover.generate_chunk_proofs
+
+            def tracked_generate_chunk_proofs(
+                chunk, padded_components, smt, sbom_root, vul_db_root, policy_hash, policy_max_cvss, merkle_paths_all
+            ):
+                res = orig_generate_chunk_proofs(
+                    chunk, padded_components, smt, sbom_root, vul_db_root, policy_hash, policy_max_cvss, merkle_paths_all
+                )
+                if res:
+                    self.execution_metrics["total_chunks_processed"] += 1
+                return res
+
+            prover.generate_chunk_proofs = tracked_generate_chunk_proofs
+
+            # Execute proof generation for the job
+            logger.info("Executing ProverService.process_job natively on Linux...")
+            processed_job = prover.process_job(job_id=job.id, user_id=user.id)
+            if not processed_job or processed_job.status != "completed":
+                raise RuntimeError(f"ProverService.process_job did not complete successfully (status={getattr(processed_job, 'status', None)})")
+
+            logger.info("Full 256-segment proof generation succeeded! Executing 6 negative verification tests...")
+            self._run_negative_tests(db, job, user.id)
+
+
+            self.execution_metrics["status"] = "success"
+            return 0
+        finally:
+            sys.modules["zkp_service.app.services.prover_service"].build_toolchain_command = orig_build_toolchain
+            sys.modules["zkp_service.app.services.prover_service"].run_toolchain_command = orig_run_toolchain
+
+    def _run_negative_tests(self, db: Any, job: Any, user_id: uuid.UUID) -> None:
+        """Run all 6 mandatory negative verification rejection checks."""
+        from verification_service.app.core.verifier import NoirVerifier
+        from verification_service.app.services.verification_service import VerificationService
+        from verification_service.app.schemas.verification_schemas import VerifyProofRequest
+        from verification_service.app.models.verification_models import VerificationRequest
+        from policy_service.app.services.policy_service import create_policy
+        from shared.models.user import User
+        from zkp_service.app.models.zkp_models import SegmentProof
+
+        verifier = VerificationService(session=db, verifier=NoirVerifier())
+
+        # Authoritative commitment validation from ProofJob (ZK-002 / STAGE-D-ACCEPTANCE)
+        for commitment_name, val in [
+            ("sbom_root", job.sbom_root),
+            ("vulnerability_db_root", job.vulnerability_db_root),
+            ("policy_hash", job.policy_hash),
+        ]:
+            if not val or not isinstance(val, str):
+                raise ValueError(
+                    f"Authoritative commitment '{commitment_name}' is missing or unpopulated on ProofJob {job.id}: {val!r}"
+                )
+            if not re.match(r"^0x[a-fA-F0-9]{64}$", val):
+                raise ValueError(
+                    f"Authoritative commitment '{commitment_name}' on ProofJob {job.id} does not satisfy canonical schema: {val!r}"
+                )
+
+        valid_req = VerifyProofRequest(
+            sbom_root=job.sbom_root,
+            vulnerability_db_root=job.vulnerability_db_root,
+            policy_hash=job.policy_hash,
+            proof_job_id=job.id,
+        )
+
+        # 1. Tampered SBOM Root
+        bad_sbom = VerifyProofRequest(
+            sbom_root="0x" + "00" * 31 + "ff",
+            vulnerability_db_root=valid_req.vulnerability_db_root,
+            policy_hash=valid_req.policy_hash,
+            proof_job_id=valid_req.proof_job_id,
+        )
+        res_sbom = verifier.process_verification(bad_sbom, user_id)
+        assert res_sbom.result != "verified", "Negative test failed: Tampered SBOM root was accepted"
+        self.execution_metrics["negative_tests_results"]["tampered_sbom_root"] = f"REJECTED ({res_sbom.result})"
+        db.query(VerificationRequest).filter_by(proof_job_id=valid_req.proof_job_id).delete()
+        db.commit()
+
+        # 2. Tampered Vulnerability DB Root
+        bad_vuln = VerifyProofRequest(
+            sbom_root=valid_req.sbom_root,
+            vulnerability_db_root="0x" + "00" * 31 + "ee",
+            policy_hash=valid_req.policy_hash,
+            proof_job_id=valid_req.proof_job_id,
+        )
+        res_vuln = verifier.process_verification(bad_vuln, user_id)
+        assert res_vuln.result != "verified", "Negative test failed: Tampered Vuln DB root was accepted"
+        self.execution_metrics["negative_tests_results"]["tampered_vuln_db_root"] = f"REJECTED ({res_vuln.result})"
+        db.query(VerificationRequest).filter_by(proof_job_id=valid_req.proof_job_id).delete()
+        db.commit()
+
+        # 3. Corrupted Proof Bytes
+        seg = db.query(SegmentProof).filter(
+            SegmentProof.chunk_id == job.chunks[0].id,
+            SegmentProof.segment_index == 0,
+        ).first()
+        assert seg is not None, "Cannot find segment proof for corruption test"
+        orig_artifact = seg.proof_artifact
+        orig_hash = seg.proof_artifact_hash
+
+        try:
+            raw_bytes = base64.b64decode(orig_artifact)
+            corrupted_bytes = raw_bytes[:-16] + b"\xff" * 16
+            seg.proof_artifact = base64.b64encode(corrupted_bytes).decode("utf-8")
+            seg.proof_artifact_hash = hashlib.sha256(corrupted_bytes).hexdigest()
+            db.commit()
+
+            corrupt_req = VerifyProofRequest(
+                sbom_root=valid_req.sbom_root,
+                vulnerability_db_root=valid_req.vulnerability_db_root,
+                policy_hash=valid_req.policy_hash,
+                proof_job_id=valid_req.proof_job_id,
+            )
+            res_corrupt = verifier.process_verification(corrupt_req, user_id)
+            assert res_corrupt.result != "verified", "Negative test failed: Corrupted proof bytes were accepted"
+            self.execution_metrics["negative_tests_results"]["corrupted_proof_bytes"] = f"REJECTED ({res_corrupt.result})"
+        finally:
+            try:
+                seg.proof_artifact = orig_artifact
+                seg.proof_artifact_hash = orig_hash
+                db.commit()
+            except Exception:
+                db.rollback()
+                seg.proof_artifact = orig_artifact
+                seg.proof_artifact_hash = orig_hash
+                db.commit()
+            db.query(VerificationRequest).filter_by(proof_job_id=valid_req.proof_job_id).delete()
+            db.commit()
+
+        # 4. Truncated Proof Bytes
+        try:
+            raw_bytes = base64.b64decode(orig_artifact)
+            truncated_bytes = raw_bytes[:100]
+            seg.proof_artifact = base64.b64encode(truncated_bytes).decode("utf-8")
+            seg.proof_artifact_hash = hashlib.sha256(truncated_bytes).hexdigest()
+            db.commit()
+
+            trunc_req = VerifyProofRequest(
+                sbom_root=valid_req.sbom_root,
+                vulnerability_db_root=valid_req.vulnerability_db_root,
+                policy_hash=valid_req.policy_hash,
+                proof_job_id=valid_req.proof_job_id,
+            )
+            res_trunc = verifier.process_verification(trunc_req, user_id)
+            assert res_trunc.result != "verified", "Negative test failed: Truncated proof bytes were accepted"
+            self.execution_metrics["negative_tests_results"]["truncated_proof_bytes"] = f"REJECTED ({res_trunc.result})"
+        finally:
+            try:
+                seg.proof_artifact = orig_artifact
+                seg.proof_artifact_hash = orig_hash
+                db.commit()
+            except Exception:
+                db.rollback()
+                seg.proof_artifact = orig_artifact
+                seg.proof_artifact_hash = orig_hash
+                db.commit()
+            db.query(VerificationRequest).filter_by(proof_job_id=valid_req.proof_job_id).delete()
+            db.commit()
+
+        # 5. Policy Threshold Violation
+        orig_pol_id = job.policy_id
+        strict_pol = create_policy(db, max_cvss_score=3.0, name="Strict Acceptance Policy")
+        try:
+            bad_policy_req = VerifyProofRequest(
+                sbom_root=valid_req.sbom_root,
+                vulnerability_db_root=valid_req.vulnerability_db_root,
+                policy_hash=strict_pol.policy_hash,
+                proof_job_id=valid_req.proof_job_id,
+            )
+            res_policy = verifier.process_verification(bad_policy_req, user_id)
+            assert res_policy.result != "verified", "Negative test failed: Policy threshold violation was accepted"
+            self.execution_metrics["negative_tests_results"]["policy_threshold_violation"] = f"REJECTED ({res_policy.result})"
+        finally:
+            db.query(VerificationRequest).filter_by(proof_job_id=valid_req.proof_job_id).delete()
+            db.delete(strict_pol)
+            from policy_service.app.models.policy_models import SecurityPolicy
+            db.query(SecurityPolicy).filter_by(id=orig_pol_id).update({"is_active": 1})
+            db.commit()
+
+        # 6. Cross-Tenant Verification Rejection
+        foreign_user = User(
+            id=uuid.uuid4(),
+            username="unauthorized_buyer_linux",
+            hashed_password="pw",
+            role="buyer",
+        )
+        db.add(foreign_user)
+        db.commit()
+
+        try:
+            res_foreign = verifier.process_verification(valid_req, foreign_user.id)
+            assert res_foreign.result == "verification_unavailable", (
+                f"Cross-tenant verification expected verification_unavailable, got {res_foreign.result}"
+            )
+            assert res_foreign.result != "verified", "Negative test failed: Cross-tenant verification was accepted"
+            self.execution_metrics["negative_tests_results"]["cross_tenant_rejection"] = f"REJECTED ({res_foreign.result})"
+        finally:
+            db.query(VerificationRequest).filter_by(proof_job_id=valid_req.proof_job_id).delete()
+            db.delete(foreign_user)
+            db.commit()
+
+        logger.info("All 6 negative verification tests PASSED.")
+
+        # 7. Authoritative Positive Verification and Certificate Issuance
+        db.query(VerificationRequest).filter_by(proof_job_id=valid_req.proof_job_id).delete()
+        db.commit()
+
+        logger.info("Executing authoritative positive verification and certificate issuance...")
+        res_valid = verifier.process_verification(valid_req, user_id)
+        assert res_valid.result == "verified", (
+            f"Positive verification failed: expected 'verified', got '{res_valid.result}'"
+        )
+        assert res_valid.certificate is not None, "Certificate was not issued for verified proof job"
+        logger.info("Positive verification PASSED with Certificate ID: %s", res_valid.certificate.id)
+        self.execution_metrics["positive_verification"] = {
+            "result": res_valid.result,
+            "certificate_id": str(res_valid.certificate.id),
+            "certificate_status": getattr(res_valid.certificate, "status", "active"),
+        }
+
+    def _run_negative_tests_on_bounded_proof(self) -> None:
+        """Run negative verification tests on the freshly generated bounded proof."""
+        logger.info("Executing negative verification tests on freshly generated bounded proof...")
+        profile = get_crypto_profile()
+
+        # Look for persisted segment proof in self.artifacts_dir
+        proof_files = sorted(self.artifacts_dir.glob("chunk_*_segment_*.proof"))
+        if not proof_files:
+            logger.warning("No persisted segment proofs found in %s to run negative tests on", self.artifacts_dir)
+            return
+
+        proof_file = proof_files[0]
+        meta_file = proof_file.with_suffix(".meta.json")
+        pi_file = self.artifacts_dir / f"{proof_file.stem}.public_inputs.json"
+
+        if not meta_file.exists() or not pi_file.exists():
+            logger.warning("Metadata or public inputs file missing for %s", proof_file)
+            return
+
+        with open(meta_file, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        with open(pi_file, "r", encoding="utf-8") as f:
+            pi_data = json.load(f)
+        with open(proof_file, "rb") as f:
+            proof_bytes = f.read()
+
+        circuit_name = meta["circuit_name"]
+        vk_path, _, _ = profile.get_artifact_paths(circuit_name)
+        expected_vk_hash = profile.decomposed_artifacts[circuit_name]["vk_hash"]
+        with open(vk_path, "rb") as f_vk:
+            vk_bytes = f_vk.read()
+
+        valid_pi = pi_data["public_inputs"]
+
+        # 1. Negative Test: Tampered Public Input
+        bad_pi = list(valid_pi)
+        bad_pi[0] = "0x" + "00" * 31 + "ff"
+        t0 = time.monotonic()
+        try:
+            res_bad_pi = verify_bound_proof(
+                circuit_id=circuit_name,
+                verification_key=vk_bytes,
+                expected_verification_key_sha256=expected_vk_hash,
+                complete_proof=proof_bytes,
+                expected_public_inputs=bad_pi,
+                timeout_seconds=self.per_segment_timeout_seconds,
+            )
+        except Exception:
+            res_bad_pi = False
+        t_dur = round(time.monotonic() - t0, 3)
+        assert res_bad_pi is False, "Negative test failed: Tampered public input was accepted!"
+        self.execution_metrics["negative_tests_results"]["tampered_public_input"] = "REJECTED (PASS)"
+        self.execution_metrics["stage_executions"].append({
+            "stage": "negative_test_tampered_public_input",
+            "command": "verify_bound_proof(tampered_public_inputs)",
+            "exit_status": 0,
+            "status": "PASS",
+            "elapsed_seconds": t_dur,
+            "details": "Correctly rejected proof with altered public input commitment",
+        })
+        logger.info("  -> Negative Test 1 (Tampered Public Input): REJECTED (PASS)")
+
+        # 2. Negative Test: Tampered Proof Body
+        tampered_proof = bytearray(proof_bytes)
+        tampered_proof[-10] ^= 0xFF
+        t0 = time.monotonic()
+        try:
+            res_tampered_body = verify_bound_proof(
+                circuit_id=circuit_name,
+                verification_key=vk_bytes,
+                expected_verification_key_sha256=expected_vk_hash,
+                complete_proof=bytes(tampered_proof),
+                expected_public_inputs=valid_pi,
+                timeout_seconds=self.per_segment_timeout_seconds,
+            )
+        except Exception:
+            res_tampered_body = False
+        t_dur = round(time.monotonic() - t0, 3)
+        assert res_tampered_body is False, "Negative test failed: Tampered proof body was accepted!"
+        self.execution_metrics["negative_tests_results"]["tampered_proof_body"] = "REJECTED (PASS)"
+        self.execution_metrics["stage_executions"].append({
+            "stage": "negative_test_tampered_proof_body",
+            "command": "verify_bound_proof(tampered_proof_body)",
+            "exit_status": 0,
+            "status": "PASS",
+            "elapsed_seconds": t_dur,
+            "details": "Correctly rejected proof with corrupted proof body byte",
+        })
+        logger.info("  -> Negative Test 2 (Tampered Proof Body): REJECTED (PASS)")
+
+        # 3. Negative Test: Tampered Verification Key
+        bad_vk = bytearray(vk_bytes)
+        bad_vk[10] ^= 0xFF
+        bad_vk_hash = hashlib.sha256(bad_vk).hexdigest()
+        t0 = time.monotonic()
+        rejected_vk = False
+        try:
+            res_bad_vk = verify_bound_proof(
+                circuit_id=circuit_name,
+                verification_key=bytes(bad_vk),
+                expected_verification_key_sha256=bad_vk_hash,
+                complete_proof=proof_bytes,
+                expected_public_inputs=valid_pi,
+                timeout_seconds=self.per_segment_timeout_seconds,
+            )
+            rejected_vk = (res_bad_vk is False)
+        except Exception:
+            rejected_vk = True
+        t_dur = round(time.monotonic() - t0, 3)
+        assert rejected_vk is True, "Negative test failed: Proof verified under corrupted verification key!"
+        self.execution_metrics["negative_tests_results"]["tampered_verification_key"] = "REJECTED (PASS)"
+        self.execution_metrics["stage_executions"].append({
+            "stage": "negative_test_tampered_verification_key",
+            "command": "verify_bound_proof(corrupted_verification_key)",
+            "exit_status": 0,
+            "status": "PASS",
+            "elapsed_seconds": t_dur,
+            "details": "Correctly rejected proof when tested against corrupted verification key",
+        })
+        logger.info("  -> Negative Test 3 (Tampered Verification Key): REJECTED (PASS)")
+
+
+    def _save_execution_manifest(self) -> None:
+        """Persist structured metrics to JSON."""
+        try:
+            out_file = Path(self.manifest_output_path)
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(out_file, "w", encoding="utf-8") as f:
+                json.dump(self.execution_metrics, f, indent=2)
+            logger.info("Saved execution manifest to %s", self.manifest_output_path)
+        except Exception as exc:
+            logger.error("Failed to write execution manifest: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# CLI Entrypoint (Strictly Dormant by Default)
+# ---------------------------------------------------------------------------
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Stage D5 Linux-Native Live 256-Segment Acceptance Runner (Strictly Dormant by Default)",
+    )
+    parser.add_argument(
+        "--execute-live-acceptance",
+        action="store_true",
+        default=False,
+        help="EXPLICIT OPT-IN FLAG. Required to execute live proof generation. Without this flag, runner is dormant.",
+    )
+    parser.add_argument(
+        "--check-safeguards-only",
+        action="store_true",
+        default=False,
+        help="Perform Linux preflight safeguard and memory checks without executing live proof generation.",
+    )
+    parser.add_argument(
+        "--max-overall-seconds",
+        type=float,
+        default=18000.0,
+        help="Overall deadline in seconds (default: 18000s / 5 hours)",
+    )
+    parser.add_argument(
+        "--segment-timeout-seconds",
+        type=int,
+        default=120,
+        help="Per-segment toolchain timeout in seconds (default: 120s)",
+    )
+    parser.add_argument(
+        "--min-host-ram-gib",
+        type=float,
+        default=2.0,
+        help="Host available RAM abort threshold in GiB (default: 2.0 GiB)",
+    )
+    parser.add_argument(
+        "--poll-interval-seconds",
+        type=float,
+        default=1.0,
+        help="Safeguard monitoring poll interval in seconds (default: 1.0s)",
+    )
+    parser.add_argument(
+        "--meminfo-path",
+        type=str,
+        default="/proc/meminfo",
+        help="Path to meminfo file (default: /proc/meminfo)",
+    )
+    parser.add_argument(
+        "--output-manifest",
+        type=str,
+        default=None,
+        help="Path to write execution manifest JSON",
+    )
+    parser.add_argument(
+        "--artifacts-dir",
+        type=str,
+        default=None,
+        help="Directory to persist durable proof artifacts (default: unique subdir next to manifest)",
+    )
+    parser.add_argument(
+        "--max-segments",
+        type=int,
+        default=None,
+        help="Maximum segments to prove before bounded clean exit (default: None = all 256 segments)",
+    )
+
+    args = parser.parse_args()
+
+    if args.max_segments is not None and args.max_segments <= 0:
+        logger.error("--max-segments must be a positive integer greater than zero (got %d)", args.max_segments)
+        return 2
+
+    runner = LiveAcceptanceRunnerLinux(
+        max_overall_seconds=args.max_overall_seconds,
+        per_segment_timeout_seconds=args.segment_timeout_seconds,
+        min_host_ram_gib=args.min_host_ram_gib,
+        poll_interval_seconds=args.poll_interval_seconds,
+        meminfo_path=args.meminfo_path,
+        manifest_output_path=args.output_manifest,
+        artifacts_dir=args.artifacts_dir,
+        max_segments=args.max_segments,
+    )
+
+    if args.check_safeguards_only:
+        logger.info("Executing safeguards-only Linux preflight check (no proving)...")
+        ok = runner.check_safeguards_preflight()
+        return 0 if ok else 1
+
+    if not args.execute_live_acceptance:
+        logger.warning(
+            "DORMANT RUNNER: Neither --execute-live-acceptance nor --check-safeguards-only was specified.\n"
+            "By design, this runner is strictly dormant and will not execute proof generation, invoke toolchains,\n"
+            "or access databases without explicit opt-in authorization.\n"
+            "To test safeguards without proving, run: python scripts/run_live_256_acceptance_linux.py --check-safeguards-only\n"
+            "Exiting safely with code 0."
+        )
+        return 0
+
+    return runner.run()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

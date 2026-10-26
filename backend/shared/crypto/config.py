@@ -243,7 +243,11 @@ class CryptoProfile:
 
                 if expected_manifest:
                     for key, expected in expected_manifest.items():
-                        if manifest.get(key) != expected:
+                        actual = manifest.get(key)
+                        if isinstance(expected, str) and expected.startswith("0x") and isinstance(actual, str) and actual.startswith("0x"):
+                            if int(expected, 16) != int(actual, 16):
+                                raise ValueError(f"Manifest binding mismatch for {key}")
+                        elif actual != expected:
                             raise ValueError(f"Manifest binding mismatch for {key}")
 
                 allowed_names = set(proof_files) | {"manifest.json", "profile.json"}

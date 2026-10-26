@@ -58,11 +58,12 @@ def get_password_hash(password: str) -> str:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
+    now = datetime.now(timezone.utc)
     if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
+        expire = now + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
+        expire = now + timedelta(minutes=15)
+    to_encode.update({"exp": expire, "iat": now.timestamp()})
     encoded_jwt = jwt.encode(to_encode, get_jwt_secret(), algorithm=ALGORITHM)
     return encoded_jwt
 
@@ -89,6 +90,32 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     user = db.query(User).filter(User.username == username).first()
     if user is None:
         raise credentials_exception
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is deactivated",
+        )
+
+    # Invalidate tokens issued prior to the user's latest credential update (e.g. password change)
+    iat = payload.get("iat")
+    if iat is None or isinstance(iat, bool) or not isinstance(iat, (int, float)):
+        raise credentials_exception
+
+    try:
+        token_issued_at = datetime.fromtimestamp(float(iat), tz=timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        raise credentials_exception
+
+    # Reject tokens with issued-at claims in the future beyond acceptable clock skew (60s)
+    now_utc = datetime.now(timezone.utc)
+    if token_issued_at > now_utc + timedelta(seconds=60):
+        raise credentials_exception
+
+    if user.updated_at is not None:
+        user_updated_at = user.updated_at if user.updated_at.tzinfo else user.updated_at.replace(tzinfo=timezone.utc)
+        if (user_updated_at.timestamp() - token_issued_at.timestamp()) > 0.05:
+            raise credentials_exception
+
     return user
 
 

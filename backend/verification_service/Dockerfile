@@ -1,6 +1,8 @@
 FROM python:3.11-slim
 
-
+RUN apt-get update && apt-get install -y nodejs curl tar gzip libc++1 && rm -rf /var/lib/apt/lists/*
+RUN curl -sL https://raw.githubusercontent.com/AztecProtocol/aztec-packages/master/barretenberg/cpp/installation/install | bash
+RUN /root/.bb/bbup -v 0.46.1
 
 WORKDIR /app
 

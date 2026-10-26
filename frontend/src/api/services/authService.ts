@@ -1,8 +1,8 @@
 import { apiClient } from "../client";
-import { User, AuthResponse } from "../types";
+import { User, AuthResponse, PasswordChangeRequest } from "../types";
 
 export const authService = {
-  login: async (username: string, password: string):Promise<AuthResponse> => {
+  login: async (username: string, password: string): Promise<AuthResponse> => {
     const params = new URLSearchParams();
     params.append("username", username);
     params.append("password", password);
@@ -12,7 +12,7 @@ export const authService = {
     });
   },
   
-  register: async (username: string, password: string):Promise<{ message: string; username: string; role: string }> => {
+  register: async (username: string, password: string): Promise<{ message: string; username: string; role: string }> => {
     const params = new URLSearchParams();
     params.append("username", username);
     params.append("password", password);
@@ -22,9 +22,23 @@ export const authService = {
     });
   },
 
-  me: async ():Promise<User> => {
+  me: async (): Promise<User> => {
     return apiClient<User>("/api/v1/auth/me", {
       method: "GET",
+    });
+  },
+
+  changePassword: async (
+    dataOrCurrentPassword: PasswordChangeRequest | string,
+    newPasswordArg?: string
+  ): Promise<{ message: string }> => {
+    const payload =
+      typeof dataOrCurrentPassword === "object"
+        ? dataOrCurrentPassword
+        : { current_password: dataOrCurrentPassword, new_password: newPasswordArg || "" };
+    return apiClient<{ message: string }>("/api/v1/auth/change-password", {
+      method: "POST",
+      data: payload,
     });
   }
 };

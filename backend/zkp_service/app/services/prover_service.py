@@ -1,5 +1,6 @@
 import logging
 import os
+import shlex
 import subprocess
 import base64
 import threading
@@ -36,6 +37,87 @@ def hash_32(elements):
     for i in range(1, 32):
         current = hash_2(current, elements[i])
     return current
+
+
+def build_toolchain_command(
+    tool: str,
+    subcmd_args: list[str],
+    *,
+    os_name: str | None = None,
+    wsl_distro: str | None = None,
+) -> list[str]:
+    """
+    Construct command line for executing Nargo or Barretenberg.
+
+    Supported runtimes:
+    - POSIX (Linux/Docker): executes tool directly via PATH.
+    - Windows: executes tool inside WSL (using WSL_DISTRIBUTION if set, or system default WSL distribution).
+
+    Args:
+        tool: "nargo" or "bb"
+        subcmd_args: argument list for the tool (e.g. ["execute", "-p", ...])
+        os_name: Override for OS detection (defaults to os.name)
+        wsl_distro: Override for WSL distribution name (defaults to WSL_DISTRIBUTION env var)
+
+    Returns:
+        Command list suitable for subprocess.run
+    """
+    if tool not in ("nargo", "bb", "node", "acvm"):
+        raise ValueError(f"Unsupported tool: {tool}")
+
+    target_os = os_name if os_name is not None else os.name
+    if target_os == "posix":
+        if tool in ("node", "acvm"):
+            from zkp_service.crypto_runtime.acvm_adapter import resolve_node_command
+            cmd_base, _ = resolve_node_command()
+            node_exe = cmd_base[0] if cmd_base else "node"
+            return [node_exe] + list(subcmd_args)
+        return [tool] + list(subcmd_args)
+
+    # Windows / non-POSIX runtime: route through WSL
+    distro = wsl_distro if wsl_distro is not None else os.environ.get("WSL_DISTRIBUTION")
+    if tool == "nargo":
+        binary_path = "~/.nargo/bin/nargo"
+    elif tool == "bb":
+        binary_path = "~/.bb/bb"
+    else:
+        binary_path = "~/.bin/node"
+    args_str = " ".join(shlex.quote(str(arg)) for arg in subcmd_args)
+    inner_cmd = f"{binary_path} {args_str}".strip()
+
+    cmd = ["wsl"]
+    if distro and distro.strip():
+        cmd.extend(["-d", distro.strip()])
+    cmd.extend(["--", "bash", "-c", inner_cmd])
+    return cmd
+
+
+def run_toolchain_command(
+    cmd: list[str],
+    cwd: str,
+    timeout: int | float,
+) -> subprocess.CompletedProcess | None:
+    """
+    Execute toolchain command with bounded timeout and safe error handling.
+    Returns CompletedProcess on execution, or None if the binary is missing, timed out, or failed to start.
+    """
+    try:
+        return subprocess.run(
+            cmd,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError as exc:
+        logger.error("Runtime toolchain unavailable: executable '%s' not found: %s", cmd[0], exc)
+        return None
+    except subprocess.TimeoutExpired as exc:
+        logger.error("Toolchain execution timed out after %ss for '%s': %s", exc.timeout, cmd[0], exc)
+        return None
+    except OSError as exc:
+        logger.error("Toolchain execution failed for '%s': %s", cmd[0], exc)
+        return None
 
 
 class ProverService:
@@ -77,12 +159,13 @@ class ProverService:
                 return None
                 
             with _user_lock:
-                active_user_id = str(job.user_id)
-                if _user_active_jobs.get(active_user_id, 0) >= 1:
-                    logger.warning(f"User {active_user_id} exceeded process-local quota")
-                    return self._repo.update_job_status(job_id, "failed", error_message="Per-user quota exceeded")
-                _user_active_jobs[active_user_id] = _user_active_jobs.get(active_user_id, 0) + 1
-                quota_acquired = True
+                active_user_id = str(job.user_id) if job.user_id is not None else None
+                if active_user_id is not None:
+                    if _user_active_jobs.get(active_user_id, 0) >= 1:
+                        logger.warning(f"User {active_user_id} exceeded process-local quota")
+                        return self._repo.update_job_status(job_id, "failed", error_message="Per-user quota exceeded")
+                    _user_active_jobs[active_user_id] = _user_active_jobs.get(active_user_id, 0) + 1
+                    quota_acquired = True
                 
             self._repo.update_job_status(job_id, "assembling_witness")
 
@@ -94,6 +177,13 @@ class ProverService:
 
             if not sbom or not snapshot or not policy:
                 return self._repo.update_job_status(job_id, "failed", error_message="Missing upstream data references")
+
+            # Recheck snapshot eligibility immediately before witness assembly and proving begins
+            from vulnerability_service.app.core.snapshot_expiry import is_snapshot_usable_for_proving
+            usable, reason = is_snapshot_usable_for_proving(snapshot)
+            if not usable:
+                logger.warning(f"Proof job {job_id} aborted before proving: {reason}")
+                return self._repo.update_job_status(job_id, "failed", error_message=f"Snapshot ineligible: {reason}")
 
             components = self._session.query(Component).filter(
                 Component.sbom_upload_id == sbom.id
@@ -130,34 +220,36 @@ class ProverService:
                 else:
                     padded_components.append({"hash": poseidon_hash([0]), "score": 0, "presence": 0})
 
-            # 4. Create chunks
+            # 4. Create chunks and segments atomically in a single transaction
+            chunks_data = []
             for chunk_idx in range(self.TOTAL_CHUNKS):
                 start = chunk_idx * self.CHUNK_SIZE
                 chunk_comps = padded_components[start:start+self.CHUNK_SIZE]
                 comp_hashes = [c["hash"] for c in chunk_comps]
                 components_commit_val = hex(hash_32(comp_hashes))
-                
-                chunk = self._repo.create_chunk(
-                    proof_job_id=job.id,
-                    chunk_index=chunk_idx,
-                    total_chunks=self.TOTAL_CHUNKS,
-                    component_start=start,
-                    component_count=self.CHUNK_SIZE,
-                    components_commit=components_commit_val
-                )
-                
-                for seg_idx in range(self.SEGMENTS_PER_CHUNK):
-                    self._repo.create_segment(chunk.id, chunk_idx, self.TOTAL_CHUNKS, seg_idx)
+                chunks_data.append({
+                    "chunk_index": chunk_idx,
+                    "total_chunks": self.TOTAL_CHUNKS,
+                    "component_start": start,
+                    "component_count": self.CHUNK_SIZE,
+                    "components_commit": components_commit_val,
+                })
+
+            self._repo.create_chunks_and_segments_batch(
+                proof_job_id=job.id,
+                chunks_data=chunks_data,
+                segments_per_chunk=self.SEGMENTS_PER_CHUNK,
+            )
 
             # 5. Execute all chunks (Bounded Concurrency: sequential)
             job = self._repo.update_job_status(
                 job_id, "running", 
                 sbom_root=sbom.sbom_root, 
-                vulnerability_db_root=snapshot.provisional_smt_root,
+                vulnerability_db_root=snapshot.authoritative_smt_root,
                 policy_hash=policy.policy_hash
             )
             
-            job = self.generate_all_chunk_proofs(job.id, padded_components, smt, sbom.sbom_root, snapshot.provisional_smt_root, policy.policy_hash, policy.max_allowed_cvss_int)
+            job = self.generate_all_chunk_proofs(job.id, padded_components, smt, sbom.sbom_root, snapshot.authoritative_smt_root, policy.policy_hash, policy.max_allowed_cvss_int)
             return job
 
         except Exception as e:
@@ -166,7 +258,11 @@ class ProverService:
         finally:
             if quota_acquired and active_user_id is not None:
                 with _user_lock:
-                    _user_active_jobs[active_user_id] = max(0, _user_active_jobs.get(active_user_id, 0) - 1)
+                    remaining = max(0, _user_active_jobs.get(active_user_id, 0) - 1)
+                    if remaining == 0:
+                        _user_active_jobs.pop(active_user_id, None)
+                    else:
+                        _user_active_jobs[active_user_id] = remaining
             _global_prover_lock.release()
 
     def _compute_merkle_paths(self, padded_components):
@@ -220,9 +316,10 @@ class ProverService:
         import json
         
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+        archive_dir_name = "archive" if os.path.exists(os.path.join(project_root, "archive")) or not os.path.exists(os.path.join(project_root, "archives")) else "archives"
         # Create a temporary directory for atomic assembly
-        archive_tmp_dir = os.path.join(project_root, "archives", "proofs", f"{job.id}_tmp")
-        archive_final_dir = os.path.join(project_root, "archives", "proofs", str(job.id))
+        archive_tmp_dir = os.path.join(project_root, archive_dir_name, "proofs", f"{job.id}_tmp")
+        archive_final_dir = os.path.join(project_root, archive_dir_name, "proofs", str(job.id))
         
         # Clean up any previous temp state
         if os.path.exists(archive_tmp_dir):
@@ -330,8 +427,8 @@ class ProverService:
                 json.dump(manifest, f, indent=2)
 
             # Atomically finalize the archive zip
-            zip_path_base = os.path.join(project_root, "archives", "proofs", f"{job.id}")
-            zip_tmp_base = os.path.join(project_root, "archives", "proofs", f"{job.id}_zip_tmp")
+            zip_path_base = os.path.join(project_root, archive_dir_name, "proofs", f"{job.id}")
+            zip_tmp_base = os.path.join(project_root, archive_dir_name, "proofs", f"{job.id}_zip_tmp")
             
             # Zip it directly from the tmp dir
             shutil.make_archive(zip_tmp_base, 'zip', archive_tmp_dir)
@@ -492,57 +589,118 @@ class ProverService:
         artifact_name = "segment_mid_32" if "segment_mid_32" in circuit_name else circuit_name
         vk_src, json_src, project_root = self._profile.get_artifact_paths(artifact_name)
             
-        circuit_cwd = os.path.join(project_root, artifact_name)
+        source_cwd = os.path.join(project_root, artifact_name)
         uid = str(seg_db.id).replace("-", "")
         prover_name = f"Prover_{uid}"
-        prover_path = os.path.join(circuit_cwd, f"{prover_name}.toml")
+        
+        import tempfile
+        import shutil
         
         try:
-            with open(prover_path, "w") as f:
-                f.write(prover_str)
-            
-            os.makedirs(os.path.join(circuit_cwd, "proofs"), exist_ok=True)
-            
-            # Witness Gen
-            res = subprocess.run(
-                ["wsl", "-d", "kali-linux", "--", "bash", "-c", f"~/.nargo/bin/nargo execute -p {prover_name} witness_{uid}"],
-                cwd=circuit_cwd, capture_output=True, text=True, timeout=self._profile.proof_timeout_seconds
-            )
-            if res.returncode != 0:
-                logger.error(f"Witness generation failed for segment {seg_idx}: {res.stderr}")
-                return False
+            with tempfile.TemporaryDirectory() as tmpdir:
+                prover_path = os.path.join(tmpdir, f"{prover_name}.toml")
+                with open(prover_path, "w") as f:
+                    f.write(prover_str)
                 
-            # Prove
-            artifact_name = "segment_mid_32" if "segment_mid_32" in circuit_name else circuit_name
-            profile_entry = self._profile.decomposed_artifacts.get(artifact_name)
-            if not profile_entry:
-                logger.error(f"Artifact {artifact_name} not found in active crypto profile")
-                return False
+                # Copy immutable circuit assets into tmpdir workspace
+                shutil.copy(os.path.join(source_cwd, "Nargo.toml"), tmpdir)
+                shutil.copytree(os.path.join(source_cwd, "src"), os.path.join(tmpdir, "src"))
                 
-            circuit_cwd = os.path.join(project_root, artifact_name)
-            circuit_json_path = json_src
+                os.makedirs(os.path.join(tmpdir, "target"), exist_ok=True)
+                shutil.copy(json_src, os.path.join(tmpdir, "target", f"{artifact_name}.json"))
+                shutil.copy(vk_src, os.path.join(tmpdir, "target", "vk"))
+                
+                os.makedirs(os.path.join(tmpdir, "proofs"), exist_ok=True)
+                
+                # Witness Gen
+                target_json = os.path.join(tmpdir, "target", f"{artifact_name}.json")
+                target_witness = os.path.join(tmpdir, "target", f"witness_{uid}.gz")
+
+                witness_solved = False
+                try:
+                    import json
+                    try:
+                        import tomllib
+                    except ImportError:
+                        import tomli as tomllib
+
+                    raw_toml = tomllib.loads(prover_str)
+                    clean_inputs = {}
+                    for k, v in raw_toml.items():
+                        if k in ('chunk_index', 'policy_max_cvss', 'segment_index'):
+                            clean_inputs[k] = int(v) if isinstance(v, str) else v
+                        elif k in ('scores', 'presence'):
+                            clean_inputs[k] = [int(x) if isinstance(x, str) else x for x in v]
+                        else:
+                            clean_inputs[k] = v
+
+                    inputs_json_path = os.path.join(tmpdir, f"inputs_{uid}.json")
+                    with open(inputs_json_path, "w", encoding="utf-8") as f:
+                        json.dump(clean_inputs, f, indent=2)
+
+                    from zkp_service.crypto_runtime.acvm_adapter import EXECUTE_SCRIPT, to_node_path, resolve_node_command
+                    cmd_base, is_win_node = resolve_node_command()
+
+                    if cmd_base:
+                        script_arg = to_node_path(EXECUTE_SCRIPT, is_win_node)
+                        circuit_arg = to_node_path(target_json, is_win_node)
+                        inputs_arg = to_node_path(inputs_json_path, is_win_node)
+                        witness_arg = to_node_path(target_witness, is_win_node)
+
+                        acvm_args = [script_arg, circuit_arg, inputs_arg, witness_arg]
+                        cmd = build_toolchain_command("node", acvm_args)
+                        res = run_toolchain_command(cmd, cwd=tmpdir, timeout=self._profile.proof_timeout_seconds)
+
+                        if (
+                            res is not None
+                            and res.returncode == 0
+                            and os.path.isfile(target_witness)
+                            and os.path.getsize(target_witness) > 100
+                        ):
+                            with open(target_witness, "rb") as wf:
+                                if wf.read(2) == b"\x1f\x8b":
+                                    witness_solved = True
+                except Exception as acvm_exc:
+                    logger.warning("ACVM adapter encountered error: %s. Falling back to Nargo CLI.", acvm_exc)
+                    witness_solved = False
+
+                if not witness_solved:
+                    logger.info("Using controlled fallback: nargo execute for segment %d", seg_idx)
+                    witness_args = ["execute", "-p", prover_name, f"witness_{uid}"]
+                    cmd = build_toolchain_command("nargo", witness_args)
+                    res = run_toolchain_command(cmd, cwd=tmpdir, timeout=self._profile.proof_timeout_seconds)
+                    if res is None:
+                        logger.error(f"Witness generation failed to launch for segment {seg_idx}")
+                        return False
+                    if res.returncode != 0:
+                        logger.error(f"Witness generation failed for segment {seg_idx}: {res.stderr}")
+                        return False
                     
-            res = subprocess.run(
-                ["wsl", "-d", "kali-linux", "--", "bash", "-c", f"~/.bb/bb prove -b ./target/{artifact_name}.json -w ./target/witness_{uid}.gz -o ./proofs/proof_{uid}.proof"],
-                cwd=circuit_cwd, capture_output=True, text=True, timeout=self._profile.proof_timeout_seconds
-            )
-            if res.returncode != 0:
-                logger.error(f"Prove failed for segment {seg_idx}: {res.stderr}")
-                return False
-                
-            # Verify immediately (Phase 8)
-            vk_path = vk_src
-            res = subprocess.run(
-                ["wsl", "-d", "kali-linux", "--", "bash", "-c", f"~/.bb/bb verify -k ./target/vk -p ./proofs/proof_{uid}.proof"],
-                cwd=circuit_cwd, capture_output=True, text=True, timeout=self._profile.proof_timeout_seconds
-            )
-            if res.returncode != 0:
-                logger.error(f"Verification failed for segment {seg_idx}: {res.stderr}")
-                return False
-                
-            proof_path = os.path.join(circuit_cwd, "proofs", f"proof_{uid}.proof")
-            with open(proof_path, "rb") as f:
-                proof_bytes = f.read()
+                # Prove
+                prove_args = ["prove", "-b", f"./target/{artifact_name}.json", "-w", f"./target/witness_{uid}.gz", "-o", f"./proofs/proof_{uid}.proof"]
+                cmd = build_toolchain_command("bb", prove_args)
+                res = run_toolchain_command(cmd, cwd=tmpdir, timeout=self._profile.proof_timeout_seconds)
+                if res is None:
+                    logger.error(f"Prove failed to launch for segment {seg_idx}")
+                    return False
+                if res.returncode != 0:
+                    logger.error(f"Prove failed for segment {seg_idx}: code={res.returncode}")
+                    return False
+                    
+                # Verify immediately (Phase 8)
+                verify_args = ["verify", "-k", "./target/vk", "-p", f"./proofs/proof_{uid}.proof"]
+                cmd = build_toolchain_command("bb", verify_args)
+                res = run_toolchain_command(cmd, cwd=tmpdir, timeout=self._profile.proof_timeout_seconds)
+                if res is None:
+                    logger.error(f"Verification failed to launch for segment {seg_idx}")
+                    return False
+                if res.returncode != 0:
+                    logger.error(f"Verification failed for segment {seg_idx}: {res.stderr}")
+                    return False
+                    
+                proof_path = os.path.join(tmpdir, "proofs", f"proof_{uid}.proof")
+                with open(proof_path, "rb") as f:
+                    proof_bytes = f.read()
                 
             expected_len = 2304 if seg_idx == 0 else (2240 if seg_idx == 7 else 2272)
             if len(proof_bytes) != expected_len:
@@ -569,10 +727,3 @@ class ProverService:
         except Exception as e:
             logger.error(f"Segment execution error: {e}")
             return False
-            
-        finally:
-            if os.path.exists(prover_path): os.remove(prover_path)
-            target_gz = os.path.join(circuit_cwd, "target", f"witness_{uid}.gz")
-            if os.path.exists(target_gz): os.remove(target_gz)
-            proof_path = os.path.join(circuit_cwd, "proofs", f"proof_{uid}.proof")
-            if os.path.exists(proof_path): os.remove(proof_path)

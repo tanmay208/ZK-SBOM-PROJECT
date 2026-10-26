@@ -94,6 +94,8 @@ services:
       - ./segment_init_32:/segment_init_32:ro
       - ./segment_mid_32:/segment_mid_32:ro
       - ./segment_final_32:/segment_final_32:ro
+      - ./archive:/archive
+      - ./archive:/archives
 
     environment:
       - DB_DRIVER=${DB_DRIVER:-postgresql+psycopg2}
@@ -111,7 +113,7 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 4G
+          memory: 8G
         reservations:
           cpus: '0.5'
           memory: 1G
@@ -124,6 +126,8 @@ services:
       - ./segment_init_32:/segment_init_32:ro
       - ./segment_mid_32:/segment_mid_32:ro
       - ./segment_final_32:/segment_final_32:ro
+      - ./archive:/archive
+      - ./archive:/archives
 
     environment:
       - DB_DRIVER=${DB_DRIVER:-postgresql+psycopg2}
@@ -137,3 +141,5 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - CERTIFICATE_SECRET_KEY=${CERTIFICATE_SECRET_KEY}
       - CRYPTO_PROFILE=${CRYPTO_PROFILE:-prod}
+      - CERTIFICATE_ACTIVE_KID=${CERTIFICATE_ACTIVE_KID:-v1}
+      - CERTIFICATE_SECRET_KEYS=${CERTIFICATE_SECRET_KEYS}

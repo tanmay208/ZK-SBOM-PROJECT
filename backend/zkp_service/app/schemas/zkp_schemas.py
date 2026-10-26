@@ -54,6 +54,21 @@ class ChunkProofSetResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+SAFE_ERROR_MESSAGES = {
+    "Server is at capacity. Only one proof job can run concurrently.",
+    "Prover capacity reached. Please retry later.",
+    "Per-user quota exceeded",
+    "Per-user prover quota exceeded.",
+    "Proof generation failed",
+    "Component count exceeds 1024",
+    "Missing upstream data references",
+    "Proof generation orchestration failed",
+    "Proof generation worker terminated unexpectedly",
+    "Proof generation orchestration failed unexpectedly",
+}
+
+
+
 class ProofJobResponse(BaseModel):
     """
     Response model detailing the status and public artifacts of a proof job.
@@ -88,4 +103,6 @@ class ProofJobResponse(BaseModel):
     def sanitize_error_message(cls, value: str | None) -> str | None:
         if value is None:
             return None
+        if isinstance(value, str) and value in SAFE_ERROR_MESSAGES:
+            return value
         return "Proof generation failed"

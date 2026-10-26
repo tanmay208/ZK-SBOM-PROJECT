@@ -1,5 +1,5 @@
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import jwt
 import os
 from uuid import UUID
@@ -33,6 +33,64 @@ class VerificationRepository:
             VerificationRequest.proof_job_id == request.proof_job_id
         ).first()
 
+    def _sign_and_attach_certificate(
+        self,
+        req_record: VerificationRequest,
+        sbom_root: str,
+        vulnerability_db_root: str,
+        policy_hash: str,
+    ) -> VerificationCertificate:
+        """
+        Sign a JWT verification certificate and attach it to the session.
+        Preserves active key ID selection and key rotation configuration.
+        """
+        secret_str = os.environ.get("CERTIFICATE_SECRET_KEY")
+        if not secret_str:
+            raise ValueError("CERTIFICATE_SECRET_KEY must be configured for certificate signing")
+
+        active_kid = os.environ.get("CERTIFICATE_ACTIVE_KID", "v1")
+
+        keys_config = os.environ.get("CERTIFICATE_SECRET_KEYS")
+        keys = {}
+        if keys_config:
+            import json
+            try:
+                keys = json.loads(keys_config)
+            except json.JSONDecodeError:
+                raise ValueError("CERTIFICATE_SECRET_KEYS is not valid JSON")
+        if "legacy" not in keys:
+            keys["legacy"] = secret_str
+        if "v1" not in keys:
+            keys["v1"] = secret_str
+
+        if active_kid not in keys:
+            raise ValueError(f"Active key ID '{active_kid}' is missing from verification map")
+        if keys[active_kid] != secret_str:
+            raise ValueError(f"Inconsistent configuration: signing secret does not match verification map for '{active_kid}'")
+
+        now = datetime.now(timezone.utc)
+        payload = {
+            "sub": str(req_record.id),
+            "iss": "antigravity-zkp-authority",
+            "iat": now,
+            "exp": now + timedelta(days=365),
+            "sbom_root": sbom_root,
+            "vulnerability_db_root": vulnerability_db_root,
+            "policy_hash": policy_hash,
+        }
+
+        token = jwt.encode(payload, secret_str, algorithm="HS256", headers={"kid": active_kid})
+
+        cert = VerificationCertificate(
+            verification_request_id=req_record.id,
+            certificate_data=token,
+            sbom_root=sbom_root,
+            vulnerability_db_root=vulnerability_db_root,
+            policy_hash=policy_hash,
+        )
+        self._session.add(cert)
+        return cert
+
     def create_verification_record(self, request: VerifyProofRequest, result: str, user_id: UUID) -> VerificationRequest:
         """
         Persist a verification request and its certificate (if verified) atomically.
@@ -44,47 +102,48 @@ class VerificationRepository:
             policy_hash=request.policy_hash,
             proof_job_id=request.proof_job_id,
             result=result,
-            verified_at=datetime.utcnow() if result == "verified" else None,
+            verified_at=datetime.now(timezone.utc) if result == "verified" else None,
             user_id=user_id,
         )
         self._session.add(req_record)
         try:
             self._session.flush()  # Get ID without committing
-        except IntegrityError:
+        except IntegrityError as exc:
             self._session.rollback()
-            # PostgreSQL reports the unique-key race as an IntegrityError.
-            # Only return a row after querying the exact tenant fingerprint;
-            # unrelated constraint failures must still surface.
-            existing = self.get_request_by_fingerprint(request, user_id)
-            if existing:
-                return existing
-            raise
+            # If foreign key violation occurred on proof_job_id because the job is missing from zkp.proof_jobs,
+            # persist the verification record with proof_job_id=None so the fail-closed record is preserved.
+            if request.proof_job_id is not None and "verification_requests_proof_job_id_fkey" in str(exc).lower():
+                req_record = VerificationRequest(
+                    sbom_root=request.sbom_root,
+                    vulnerability_db_root=request.vulnerability_db_root,
+                    policy_hash=request.policy_hash,
+                    proof_job_id=None,
+                    result=result,
+                    verified_at=datetime.now(timezone.utc) if result == "verified" else None,
+                    user_id=user_id,
+                )
+                self._session.add(req_record)
+                try:
+                    self._session.flush()
+                except IntegrityError:
+                    self._session.rollback()
+                    existing = self.get_request_by_fingerprint(request, user_id)
+                    if existing:
+                        return existing
+                    raise
+            else:
+                existing = self.get_request_by_fingerprint(request, user_id)
+                if existing:
+                    return existing
+                raise
         
         if result == "verified":
-            secret_str = os.environ.get("CERTIFICATE_SECRET_KEY")
-            if not secret_str:
-                raise ValueError("CERTIFICATE_SECRET_KEY must be configured for certificate signing")
-            
-            payload = {
-                "sub": str(req_record.id),
-                "iss": "antigravity-zkp-authority",
-                "iat": datetime.utcnow(),
-                "exp": datetime.utcnow() + timedelta(days=365),
-                "sbom_root": request.sbom_root,
-                "vulnerability_db_root": request.vulnerability_db_root,
-                "policy_hash": request.policy_hash
-            }
-            
-            token = jwt.encode(payload, secret_str, algorithm="HS256")
-            
-            cert = VerificationCertificate(
-                verification_request_id=req_record.id,
-                certificate_data=token,
+            self._sign_and_attach_certificate(
+                req_record=req_record,
                 sbom_root=request.sbom_root,
                 vulnerability_db_root=request.vulnerability_db_root,
-                policy_hash=request.policy_hash
+                policy_hash=request.policy_hash,
             )
-            self._session.add(cert)
             
         try:
             self._session.commit()
@@ -103,31 +162,13 @@ class VerificationRepository:
         """
         req_record.result = result
         if result == "verified":
-            req_record.verified_at = datetime.utcnow()
-            secret_str = os.environ.get("CERTIFICATE_SECRET_KEY")
-            if not secret_str:
-                raise ValueError("CERTIFICATE_SECRET_KEY must be configured for certificate signing")
-            
-            payload = {
-                "sub": str(req_record.id),
-                "iss": "antigravity-zkp-authority",
-                "iat": datetime.utcnow(),
-                "exp": datetime.utcnow() + timedelta(days=365),
-                "sbom_root": req_record.sbom_root,
-                "vulnerability_db_root": req_record.vulnerability_db_root,
-                "policy_hash": req_record.policy_hash
-            }
-            
-            token = jwt.encode(payload, secret_str, algorithm="HS256")
-            
-            cert = VerificationCertificate(
-                verification_request_id=req_record.id,
-                certificate_data=token,
+            req_record.verified_at = datetime.now(timezone.utc)
+            self._sign_and_attach_certificate(
+                req_record=req_record,
                 sbom_root=req_record.sbom_root,
                 vulnerability_db_root=req_record.vulnerability_db_root,
-                policy_hash=req_record.policy_hash
+                policy_hash=req_record.policy_hash,
             )
-            self._session.add(cert)
             
         try:
             self._session.commit()
@@ -138,6 +179,7 @@ class VerificationRepository:
                 raise
             
         return req_record
+
 
     def get_certificate(self, certificate_id: UUID) -> VerificationCertificate | None:
         """
@@ -155,9 +197,24 @@ class VerificationRepository:
             VerificationCertificate.verification_request_id == request_id
         ).first()
 
-    def validate_authoritative_records(self, sbom_root: str, vuln_root: str, policy_hash: str) -> bool:
+    def validate_authoritative_records(
+        self,
+        sbom_root: str,
+        vuln_root: str,
+        policy_hash: str,
+        require_active_policy: bool = False,
+    ) -> bool:
         """
-        Validate that the provided roots match active authoritative records.
+        Validate that the provided roots match authoritative records.
+
+        Args:
+            sbom_root: Cryptographic commitment of the SBOM (Poseidon Merkle root).
+            vuln_root: Authoritative SMT root of the vulnerability snapshot.
+            policy_hash: Canonical hash of the security policy.
+            require_active_policy: When True, the policy must be currently active (is_active == 1).
+                                   This is required when verifying new compliance and issuing new certificates.
+                                   When False, any registered authoritative policy version matches,
+                                   preserving historical certificate validation.
         """
         from sbom_service.app.models.sbom_models import SBOMUpload
         from vulnerability_service.app.models.vulnerability_models import VulnerabilitySnapshot
@@ -175,29 +232,40 @@ class VerificationRepository:
         # 2. Check Vulnerability Snapshot
         snapshot = (
             self._session.query(VulnerabilitySnapshot)
-            .filter(VulnerabilitySnapshot.provisional_smt_root == vuln_root)
+            .filter(VulnerabilitySnapshot.authoritative_smt_root == vuln_root)
             .first()
         )
-        if not snapshot or snapshot.status != "approved":
+        if not snapshot or snapshot.status != "frozen":
+            return False
+
+        from vulnerability_service.app.core.snapshot_expiry import is_snapshot_expired
+        if is_snapshot_expired(snapshot):
             return False
             
         # 3. Check Policy
-        policy_exists = self._session.query(SecurityPolicy).filter(
-            SecurityPolicy.policy_hash == policy_hash,
-            SecurityPolicy.is_active == 1
-        ).first() is not None
-        
-        if not policy_exists:
+        query = self._session.query(SecurityPolicy).filter(
+            SecurityPolicy.policy_hash == policy_hash
+        )
+        if require_active_policy:
+            query = query.filter(SecurityPolicy.is_active == 1)
+
+        policy = query.first()
+        if not policy:
             return False
             
         return True
 
-    def revoke_certificate(self, cert: VerificationCertificate, reason: str = None) -> VerificationCertificate:
+    def revoke_certificate(
+        self,
+        cert: VerificationCertificate,
+        reason: str = None,
+        revoked_by: UUID = None,
+    ) -> VerificationCertificate:
         """
         Revoke an active certificate.
 
         Revocation is terminal and idempotent: a repeated request returns the
-        original timestamp and reason instead of changing audit history.
+        original timestamp, reason, and revoker instead of changing audit history.
         """
         current = self._session.query(VerificationCertificate).filter(
             VerificationCertificate.id == cert.id
@@ -208,8 +276,9 @@ class VerificationRepository:
             return current
 
         current.is_revoked = True
-        current.revoked_at = datetime.utcnow()
+        current.revoked_at = datetime.now(timezone.utc)
         current.revoked_reason = reason
+        current.revoked_by = revoked_by
 
         try:
             self._session.commit()

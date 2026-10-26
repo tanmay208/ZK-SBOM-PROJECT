@@ -1,7 +1,0 @@
-[package]
-name = "sbom_zkp"
-type = "bin"
-authors = ["Vendor"]
-compiler_version = "0.32.0"
-
-[dependencies]

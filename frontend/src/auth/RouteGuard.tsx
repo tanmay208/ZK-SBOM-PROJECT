@@ -5,13 +5,14 @@ import { useRouter, usePathname } from "next/navigation";
 import { useEffect, ReactNode } from "react";
 import { ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Role } from "@/api/types";
 
 interface RouteGuardProps {
   children: ReactNode;
-  allowedRoles?: ("vendor" | "admin" | "auditor")[];
+  allowedRoles?: Role[];
 }
 
-const PUBLIC_ROUTES = ["/login", "/register"];
+const PUBLIC_ROUTES = ["/login", "/register", "/"];
 
 export function RouteGuard({ children, allowedRoles }: RouteGuardProps) {
   const { status, user } = useAuth();

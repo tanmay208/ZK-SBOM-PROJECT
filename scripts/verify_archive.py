@@ -96,8 +96,14 @@ def verify_archive(job_id: str) -> bool:
             os.path.join(os.path.dirname(__file__), "..")
         )
         archive_path = os.path.join(
-            project_root, "archives", "proofs", f"{job.id}.zip"
+            project_root, "archive", "proofs", f"{job.id}.zip"
         )
+        if not os.path.exists(archive_path):
+            legacy_archive_path = os.path.join(
+                project_root, "archives", "proofs", f"{job.id}.zip"
+            )
+            if os.path.exists(legacy_archive_path):
+                archive_path = legacy_archive_path
 
         if not os.path.exists(archive_path):
             print(f"[-] Archive not found at {archive_path}")

@@ -7,9 +7,15 @@ const alertVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-card text-card-foreground",
+        default: "bg-card text-card-foreground border-border",
         destructive:
-          "bg-card text-destructive *:data-[slot=alert-description]:text-destructive/90 *:[svg]:text-current",
+          "border-destructive/30 bg-destructive/5 text-destructive dark:bg-destructive/10 *:data-[slot=alert-description]:text-destructive/90 *:[svg]:text-destructive",
+        success:
+          "border-success/30 bg-success/5 text-emerald-900 dark:text-emerald-200 dark:bg-success/10 *:data-[slot=alert-description]:text-emerald-800 dark:*:data-[slot=alert-description]:text-emerald-300 *:[svg]:text-emerald-600 dark:*:[svg]:text-emerald-400",
+        warning:
+          "border-warning/30 bg-warning/5 text-amber-950 dark:text-amber-200 dark:bg-warning/10 *:data-[slot=alert-description]:text-amber-800 dark:*:data-[slot=alert-description]:text-amber-300 *:[svg]:text-amber-600 dark:*:[svg]:text-amber-400",
+        info:
+          "border-info/30 bg-info/5 text-blue-950 dark:text-blue-200 dark:bg-info/10 *:data-[slot=alert-description]:text-blue-800 dark:*:data-[slot=alert-description]:text-blue-300 *:[svg]:text-blue-600 dark:*:[svg]:text-blue-400",
       },
     },
     defaultVariants: {
@@ -72,4 +78,4 @@ function AlertAction({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
-export { Alert, AlertTitle, AlertDescription, AlertAction }
+export { Alert, AlertTitle, AlertDescription, AlertAction, alertVariants }

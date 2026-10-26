@@ -21,10 +21,13 @@ Transaction discipline:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import logging
+import uuid
 
 from sqlalchemy.orm import Session
 
+from shared.exceptions import ConflictError, ValidationError
 from sbom_service.app.models.sbom_models import Application, SBOMUpload
 
 logger = logging.getLogger(__name__)
@@ -33,7 +36,7 @@ logger = logging.getLogger(__name__)
 class SBOMRepository:
     """Data-access layer for the sbom schema.
 
-    Only Application and SBOMUpload creation/lookup are implemented here.
+    Manages Application and SBOMUpload models.
     Component-level persistence belongs to later stages (normalization).
     """
 
@@ -52,11 +55,17 @@ class SBOMRepository:
         user_id: uuid.UUID,
         description: str | None = None,
     ) -> Application:
-        """Return an existing Application or create a new one.
+        """Return an existing active Application or create a new one.
 
-        Lookup is performed by (name, vendor) pair.  If a matching record
-        exists it is returned unchanged.  Otherwise a new record is added
-        to the session (NOT committed — the caller commits).
+        Lookup is performed by (name, vendor, user_id) triple. If a
+        matching record exists:
+          - If active, it is returned unchanged.
+          - If archived, a ValidationError is raised to fail closed and
+            prevent silent reuse of archived applications.
+
+        The user_id filter ensures tenant isolation: two different users
+        who register the same (name, vendor) pair each receive their own
+        Application record (AUD-A-001 remediation).
 
         Parameters are already validated by the Pydantic schema layer.
         """
@@ -65,10 +74,15 @@ class SBOMRepository:
             .filter(
                 Application.name == name,
                 Application.vendor == vendor,
+                Application.user_id == user_id,
             )
             .first()
         )
         if existing is not None:
+            if not existing.is_active:
+                raise ValidationError(
+                    f"Application '{name}' is archived and cannot receive new SBOM uploads."
+                )
             logger.debug(
                 "get_or_create_application: existing record found (id=%s)",
                 str(existing.id),
@@ -80,6 +94,8 @@ class SBOMRepository:
             vendor=vendor,
             description=description,
             user_id=user_id,
+            is_active=True,
+            archived_at=None,
         )
         self._session.add(application)
         # flush so that application.id is populated (needed for the FK
@@ -89,6 +105,146 @@ class SBOMRepository:
             "get_or_create_application: created new application (id=%s)",
             str(application.id),
         )
+        return application
+
+    def get_application_by_id(
+        self,
+        application_id: uuid.UUID,
+        user_id: uuid.UUID | None = None,
+    ) -> Application | None:
+        """Return a single Application by ID, optionally scoped to tenant owner."""
+        query = self._session.query(Application).filter(Application.id == application_id)
+        if user_id is not None:
+            query = query.filter(Application.user_id == user_id)
+        return query.first()
+
+    def list_applications(
+        self,
+        user_id: uuid.UUID,
+        include_archived: bool = False,
+        skip: int = 0,
+        limit: int = 50,
+    ) -> list[Application]:
+        """List applications owned by user_id, active-only by default."""
+        query = self._session.query(Application).filter(Application.user_id == user_id)
+        if not include_archived:
+            query = query.filter(Application.is_active == True)
+        return (
+            query.order_by(Application.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
+    def create_application(
+        self,
+        *,
+        name: str,
+        vendor: str,
+        user_id: uuid.UUID,
+        description: str | None = None,
+    ) -> Application:
+        """Create a new standalone Application.
+
+        Enforces tenant uniqueness on (name, vendor, user_id).
+        """
+        existing = (
+            self._session.query(Application)
+            .filter(
+                Application.name == name,
+                Application.vendor == vendor,
+                Application.user_id == user_id,
+            )
+            .first()
+        )
+        if existing is not None:
+            if existing.is_active:
+                raise ConflictError("Application already exists for this vendor")
+            else:
+                raise ConflictError("Application already exists and is archived. Reactivate it to resume use.")
+
+        application = Application(
+            name=name,
+            vendor=vendor,
+            description=description,
+            user_id=user_id,
+            is_active=True,
+            archived_at=None,
+        )
+        self._session.add(application)
+        self._session.flush()
+        logger.info("create_application: created application (id=%s)", str(application.id))
+        return application
+
+    def update_application(
+        self,
+        application: Application,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> Application:
+        """Update mutable metadata of an active application."""
+        if not application.is_active:
+            raise ValidationError("Cannot update an archived application. Reactivate it first.")
+
+        if name is not None and name != application.name:
+            conflict = (
+                self._session.query(Application)
+                .filter(
+                    Application.name == name,
+                    Application.vendor == application.vendor,
+                    Application.user_id == application.user_id,
+                    Application.id != application.id,
+                )
+                .first()
+            )
+            if conflict is not None:
+                raise ConflictError("Application with this name and vendor already exists")
+            application.name = name
+
+        if description is not None:
+            application.description = description
+
+        self._session.flush()
+        return application
+
+    def archive_application(self, application: Application) -> Application:
+        """Soft-archive an application. Idempotent if already archived."""
+        if not application.is_active:
+            logger.debug("archive_application: already archived (id=%s)", str(application.id))
+            return application
+
+        application.is_active = False
+        application.archived_at = datetime.now(timezone.utc)
+        self._session.flush()
+        logger.info("archive_application: application archived (id=%s)", str(application.id))
+        return application
+
+    def reactivate_application(self, application: Application) -> Application:
+        """Reactivate an archived application. Idempotent if already active."""
+        if application.is_active:
+            logger.debug("reactivate_application: already active (id=%s)", str(application.id))
+            return application
+
+        # Check if an active application with same (name, vendor, user_id) exists
+        conflict = (
+            self._session.query(Application)
+            .filter(
+                Application.name == application.name,
+                Application.vendor == application.vendor,
+                Application.user_id == application.user_id,
+                Application.is_active == True,
+                Application.id != application.id,
+            )
+            .first()
+        )
+        if conflict is not None:
+            raise ConflictError("An active application with this name and vendor already exists")
+
+        application.is_active = True
+        application.archived_at = None
+        self._session.flush()
+        logger.info("reactivate_application: application reactivated (id=%s)", str(application.id))
         return application
 
     # ------------------------------------------------------------------
