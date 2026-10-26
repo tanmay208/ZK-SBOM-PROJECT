@@ -70,3 +70,11 @@ scratch/
 scratch_*.txt
 request*.json
 test_baseline_output.txt
+
+# Local Cache & Database Backups
+.cache/
+*.sql
+
+# Historical Binary Releases & Duplicate Proof ZIPs
+master_archive/historical_releases/*.bak*
+archive/proofs/*.zip
