@@ -1,0 +1,272 @@
+{
+  "manifest_id": "manifest_d7_locked_ttl_acceptance_20261022_154800",
+  "stage": "D7",
+  "title": "Stage D7 Snapshot TTL Implementation and End-to-End Acceptance",
+  "timestamp": "2026-10-22T10:18:00Z",
+  "verdict": "PASS",
+  "vcs": {
+    "branch": "chore/final-project-cleanup",
+    "head": "0881f9ecee25618ae7d9420313f17cf1f3d68672",
+    "workspace": "E:\\Main Project"
+  },
+  "locked_policy_decisions": {
+    "D7-POL-01": {
+      "title": "Default TTL and configuration",
+      "default_seconds": 2592000,
+      "default_description": "30 days",
+      "config_env_var": "VULNERABILITY_SNAPSHOT_TTL_SECONDS",
+      "min_allowed_seconds": 3600,
+      "max_allowed_seconds": 31536000,
+      "fail_closed_validation": true,
+      "owner": "vulnerability_service.app.core.snapshot_expiry"
+    },
+    "D7-POL-02": {
+      "title": "TTL starts at freeze",
+      "formula": "expires_at = frozen_at + configured_ttl",
+      "clock_convention": "UTC-aware datetime (ISO-8601)",
+      "disallowed_triggers": ["creation", "ingestion", "approval"]
+    },
+    "D7-POL-03": {
+      "title": "Grandfather existing snapshots",
+      "legacy_expires_at": null,
+      "retroactive_expiry": false,
+      "hard_deletion": false,
+      "preserves_existing_guards": true
+    },
+    "D7-POL-04": {
+      "title": "Expiry is independent of lifecycle status",
+      "lifecycle_enum_preserved": ["pending", "approved", "frozen", "revoked"],
+      "model": "Orthogonal nullable timestamp expires_at",
+      "expired_condition": "now_utc >= expires_at (instant boundary)",
+      "background_worker_dependency": false
+    },
+    "D7-POL-05": {
+      "title": "Proof jobs and in-flight work",
+      "recheck_points": [
+        "1. Proof job creation (create_job in zkp_repository)",
+        "2. Worker immediately before witness assembly (process_job in prover_service)",
+        "3. Verification boundary (validate_authoritative_records in verification_repository)"
+      ],
+      "queued_expiry_policy": "Fail closed at prover worker start; queued status does not bypass start-time check",
+      "in_flight_safety": "Clean job failure without publishing corrupted or partial artifacts"
+    },
+    "D7-POL-06": {
+      "title": "Historical proofs and certificates",
+      "historical_preservation": true,
+      "mass_revocation": false,
+      "independent_certificate_lifecycle": "JWT exp and revocation table govern existing certificates; snapshot expiry strictly governs new proving and new verification"
+    },
+    "D7-POL-07": {
+      "title": "Synchronous enforcement",
+      "mechanism": "Authoritative server-side evaluation",
+      "background_daemon_prerequisite": false
+    }
+  },
+  "inspected_sources": [
+    "AGENTS.md",
+    "project_context/PROJECT_ROADMAP.md",
+    "project_context/PROJECT_STATE.md",
+    "project_context/HANDOFF.md",
+    "backend/vulnerability_service/app/core/snapshot_expiry.py",
+    "backend/vulnerability_service/tests/test_snapshot_expiry.py",
+    "backend/vulnerability_service/app/models/vulnerability_models.py",
+    "backend/vulnerability_service/app/schemas/vulnerability_schemas.py",
+    "backend/vulnerability_service/app/api/routes/vulnerability_routes.py",
+    "backend/zkp_service/app/repositories/zkp_repository.py",
+    "backend/zkp_service/app/services/prover_service.py",
+    "backend/verification_service/app/repositories/verification_repository.py",
+    "backend/alembic/versions/",
+    "backend/alembic/staging_guard.py",
+    ".cache/d7_manifests/manifest_d7_ttl_review_and_foundation.json",
+    ".cache/d9_manifests/manifest_d9_isolated_policy_20261022_090755_51db0b24.json"
+  ],
+  "roadmap_conflicts": [],
+  "database_and_migration": {
+    "forward_only_revision": "016",
+    "down_revision": "015",
+    "migration_file": "backend/alembic/versions/016_add_snapshot_ttl_expires_at.py",
+    "table_modified": "vulnerability.vulnerability_snapshots",
+    "column_added": {
+      "name": "expires_at",
+      "type": "DateTime(timezone=True)",
+      "nullable": true
+    },
+    "index_added": "ix_vuln_snapshots_expires_at",
+    "staging_guard_updated": {
+      "registered_revision": "016",
+      "required_contract": "v2"
+    },
+    "live_isolated_verification": {
+      "target_host": "127.0.0.1",
+      "target_port": 5434,
+      "container": "zkp_sbom_d9_ephemeral_db",
+      "isolated_database": "ZKP_SBOM_D7_EPHEMERAL",
+      "pre_revision": "015",
+      "post_revision": "016",
+      "legacy_snapshot_grandfathering_verified": true,
+      "new_snapshot_expiry_verified": true,
+      "downgrade_to_015_verified": true,
+      "reupgrade_to_016_verified": true,
+      "all_8_live_checks_passed": true,
+      "test_db_cleaned_up": true
+    },
+    "protected_resources_safety": {
+      "port_5432_zkp_sbom_untouched": true,
+      "port_5433_zkp_sbom_local_dev_untouched": true,
+      "port_5434_zkp_sbom_d9_ephemeral_preserved": true
+    }
+  },
+  "authoritative_integration_points": [
+    {
+      "boundary": "Snapshot Freeze Service",
+      "file": "backend/vulnerability_service/app/api/routes/vulnerability_routes.py",
+      "behavior": "Calculates and persists snap.expires_at atomically with status='frozen' and frozen_at"
+    },
+    {
+      "boundary": "Proof Job Creation",
+      "file": "backend/zkp_service/app/repositories/zkp_repository.py",
+      "behavior": "Rejects job creation with HTTP 400 if target snapshot is expired"
+    },
+    {
+      "boundary": "Prover Worker Immediate Pre-Flight",
+      "file": "backend/zkp_service/app/services/prover_service.py",
+      "behavior": "Rechecks snapshot usability before assembling witness; fails job cleanly if expired while queued"
+    },
+    {
+      "boundary": "Verification Record Validation",
+      "file": "backend/verification_service/app/repositories/verification_repository.py",
+      "behavior": "Rejects authoritative records for new verification if snapshot is expired"
+    }
+  ],
+  "mandatory_matrix_results": {
+    "total_tests": 37,
+    "passed": 37,
+    "failed": 0,
+    "skipped": 0,
+    "test_file": "backend/vulnerability_service/tests/test_d7_ttl_matrix.py",
+    "groups": {
+      "configuration_and_arithmetic": {
+        "count": 11,
+        "tests": [
+          "test_01_missing_ttl_configuration_defaults_to_30_days [PASS]",
+          "test_02_explicit_valid_minimum_ttl_accepted [PASS]",
+          "test_03_explicit_valid_maximum_ttl_accepted [PASS]",
+          "test_04_values_below_minimum_or_above_maximum_fail_closed [PASS]",
+          "test_05_malformed_negative_zero_non_integer_config_fails_closed [PASS]",
+          "test_06_expiry_calculated_from_frozen_at_not_creation_or_approval [PASS]",
+          "test_07_utc_aware_timestamp_handling_consistent [PASS]",
+          "test_08_expiry_is_false_immediately_before_boundary [PASS]",
+          "test_09_expiry_is_true_exactly_at_boundary [PASS]",
+          "test_10_expiry_remains_true_after_boundary [PASS]",
+          "test_11_missing_expires_at_is_compatible_with_grandfathered_snapshots [PASS]"
+        ]
+      },
+      "lifecycle_and_authorization": {
+        "count": 8,
+        "tests": [
+          "test_12_pending_and_approved_snapshots_cannot_be_used_for_proving [PASS]",
+          "test_13_frozen_unexpired_authorized_snapshots_can_be_used_for_proving [PASS]",
+          "test_14_expired_frozen_snapshots_cannot_be_used_for_new_proving [PASS]",
+          "test_15_revoked_snapshots_remain_unusable_regardless_of_expiry [PASS]",
+          "test_16_unauthorized_roles_and_cross_tenant_access_rejected [PASS]",
+          "test_17_frozen_snapshot_content_remains_immutable [PASS]",
+          "test_18_freeze_and_expiry_assignment_are_atomic_and_consistent [PASS]",
+          "test_19_repeated_freeze_or_lifecycle_requests_cannot_extend_ttl [PASS]"
+        ]
+      },
+      "proof_job_and_concurrency": {
+        "count": 6,
+        "tests": [
+          "test_20_proof_job_creation_rejects_already_expired_snapshot [PASS]",
+          "test_21_queued_job_rechecks_eligibility_immediately_before_proving_starts [PASS]",
+          "test_22_job_queued_before_expiry_cannot_bypass_start_time_check [PASS]",
+          "test_23_in_flight_expiry_behavior_tested_deterministically [PASS]",
+          "test_24_concurrent_requests_cannot_create_invalid_eligibility_state [PASS]",
+          "test_25_failure_during_proof_startup_preserves_job_integrity [PASS]"
+        ]
+      },
+      "verification_and_historical_artifacts": {
+        "count": 6,
+        "tests": [
+          "test_26_new_verification_follows_approved_snapshot_expiry_policy [PASS]",
+          "test_27_historical_certificate_validation_preserves_independent_rules [PASS]",
+          "test_28_certificate_expiry_and_revocation_still_work [PASS]",
+          "test_29_historical_artifacts_retained [PASS]",
+          "test_30_expiry_cannot_be_bypassed_through_stale_cache_or_alternate_endpoint [PASS]",
+          "test_31_existing_proof_and_verification_behavior_compatible [PASS]"
+        ]
+      },
+      "migration_and_regression": {
+        "count": 6,
+        "tests": [
+          "test_32_migration_succeeds_on_empty_isolated_database [PASS]",
+          "test_33_migration_preserves_representative_legacy_snapshot_records [PASS]",
+          "test_34_existing_frozen_snapshots_remain_expires_at_null [PASS]",
+          "test_35_new_snapshots_receive_configured_expiry [PASS]",
+          "test_36_existing_lifecycle_and_tenant_isolation_suites_pass [PASS]",
+          "test_37_relevant_regression_suites_pass [PASS]"
+        ]
+      }
+    }
+  },
+  "regression_suite_summary": {
+    "vulnerability_service": {
+      "passed": 121,
+      "failed": 0,
+      "skipped": 0
+    },
+    "alembic": {
+      "passed": 424,
+      "failed": 0,
+      "skipped": 0
+    },
+    "zkp_service": {
+      "passed": 85,
+      "failed": 0,
+      "skipped": 0
+    },
+    "verification_service": {
+      "passed": 146,
+      "failed": 0,
+      "skipped": 0
+    },
+    "policy_service": {
+      "passed": 26,
+      "failed": 0,
+      "skipped": 0
+    },
+    "sbom_service": {
+      "passed": 247,
+      "failed": 0,
+      "skipped": 0
+    },
+    "shared": {
+      "passed": 296,
+      "failed": 0,
+      "skipped": 0
+    },
+    "total_backend_tests_executed": 1345,
+    "total_backend_tests_passed": 1345,
+    "total_backend_tests_failed": 0,
+    "total_backend_tests_skipped": 0
+  },
+  "artifact_integrity_hashes": {
+    "backend/vulnerability_service/app/core/snapshot_expiry.py": "c45b4fa72ffc862e0042159843e38140c0a3d031ce1c840bafcd53e7d66b3ea6",
+    "backend/vulnerability_service/app/models/vulnerability_models.py": "3764846691105af1b307b8a8fbef6469accd6b70a33ecaf735c567e8cbe29929",
+    "backend/vulnerability_service/app/schemas/vulnerability_schemas.py": "40070e8cd60397094d35e3b0e76e0fe865c4e5527b678ccaf7d17ccecf86fb77",
+    "backend/vulnerability_service/app/api/routes/vulnerability_routes.py": "8d61c5db86b3778fd96d70e0ee3f7a7972b37a9069a74a443f88d676e9e59399",
+    "backend/zkp_service/app/repositories/zkp_repository.py": "b5e05b94e0187aee7516427b67842e9d7f4d9dbbc392a024232011e15b5eaf33",
+    "backend/zkp_service/app/services/prover_service.py": "33874c2d1eda6ceda9b80fa2feeb4f1e5b2eb05ceee7822c4d71355afcb9e9fd",
+    "backend/verification_service/app/repositories/verification_repository.py": "612fb1e5c6f8b0153bcb21cf0e1b5a47e653a9a25b45a8249fcb451e949ae907",
+    "backend/alembic/versions/016_add_snapshot_ttl_expires_at.py": "32cb2c6ddb9b24856c6d063ece6d3eaa1173ce061fb1a35306dcb3fc48eebd1c",
+    "backend/alembic/staging_guard.py": "5514641b127510114e4694861f18d4e0ee3c913ba35f893478016961b1a8f564",
+    "backend/alembic/tests/test_migration_016.py": "79cbbfcb2fc7ea726c54b6c06b48093c4ab59f2634adcb565c95d71a3b1cc40c",
+    "backend/vulnerability_service/tests/test_d7_ttl_matrix.py": "7752cbaba884e00c6c14ddcd089d0b36f2e8a5bec916ca8fbb133b26c6626f7c",
+    "scripts/verify_d7_isolated_migration.py": "13d0389ccc2a2f2fd780f632280a3ef9185c19146b8bd0f469bf231bcbe63b3b"
+  },
+  "remaining_stage_d_limitations": {
+    "d7_ttl_limitation": "RESOLVED (Full PASS with locked policy, migration 016, and 37/37 matrix pass)",
+    "d9_policy_limitation": "RESOLVED (Full PASS in isolated container port 5434 with manifest)",
+    "d5_256_segment_proving": "DEFERRED / UNVERIFIED (Formal limitation accepted by owner; pending Stage F viva preparation or standalone proving execution)"
+  }
+}

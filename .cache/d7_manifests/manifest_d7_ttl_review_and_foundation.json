@@ -1,0 +1,83 @@
+{
+  "manifest_id": "manifest_d7_ttl_review_and_foundation_20261022",
+  "stage": "D7",
+  "title": "Vulnerability Snapshot TTL Contract Audit & Expiry Engine Foundation",
+  "timestamp": "2026-10-22T09:25:00Z",
+  "verdict": "PARTIAL / BLOCKED ON OWNER POLICY DECISION",
+  "d9_audit": {
+    "alembic_guard_status": "AUDITED_AND_HARDENED",
+    "allow_unversioned_baseline_default": false,
+    "target_db_protection_verified": true,
+    "contract_v1_baseline_enforced": true,
+    "unit_tests_added": 8,
+    "policy_concurrency_lock": "pg_advisory_xact_lock(987654321)",
+    "policy_rollback_verified": true,
+    "active_policy_single_invariant_guaranteed": true
+  },
+  "d7_ttl_contract_analysis": {
+    "status": "UNRESOLVED_POLICY_DIMENSIONS_IDENTIFIED",
+    "unresolved_decisions": [
+      {
+        "dimension": "default_ttl_duration",
+        "options": ["24_hours", "30_days", "configurable_per_snapshot"],
+        "status": "REQUIRES_OWNER_SELECTION"
+      },
+      {
+        "dimension": "clock_start_event",
+        "options": ["ingested_at", "approved_at", "frozen_at"],
+        "recommendation": "frozen_at (authoritative ZKP root generation event)",
+        "status": "REQUIRES_OWNER_SELECTION"
+      },
+      {
+        "dimension": "historical_snapshot_treatment",
+        "options": ["grandfather_as_perpetual", "backfill_expires_at_retroactive", "backfill_now_plus_ttl"],
+        "recommendation": "grandfather_as_perpetual (expires_at=NULL)",
+        "status": "REQUIRES_OWNER_SELECTION"
+      },
+      {
+        "dimension": "expiry_model",
+        "options": ["orthogonal_predicate_status_frozen", "new_lifecycle_state_expired"],
+        "recommendation": "orthogonal_predicate_status_frozen",
+        "status": "REQUIRES_OWNER_SELECTION"
+      },
+      {
+        "dimension": "queued_proof_job_behavior",
+        "options": ["allow_completion_if_queued_before_expiry", "fail_immediately_on_prover_execution"],
+        "status": "REQUIRES_OWNER_SELECTION"
+      },
+      {
+        "dimension": "historical_proof_and_certificate_validity",
+        "options": ["certificates_remain_valid_until_jwt_exp", "reject_verification_if_snapshot_expired"],
+        "recommendation": "certificates_remain_valid_until_jwt_exp",
+        "status": "REQUIRES_OWNER_SELECTION"
+      },
+      {
+        "dimension": "enforcement_mechanism",
+        "options": ["synchronous_lazy_evaluation", "background_scheduler_daemon"],
+        "recommendation": "synchronous_lazy_evaluation (zero daemon dependency, offline deterministic)",
+        "status": "REQUIRES_OWNER_SELECTION"
+      }
+    ]
+  },
+  "foundation_implementation": {
+    "module": "backend/vulnerability_service/app/core/snapshot_expiry.py",
+    "tests_module": "backend/vulnerability_service/tests/test_snapshot_expiry.py",
+    "tests_passed": 5,
+    "tests_failed": 0,
+    "deterministic_injected_clock": true,
+    "zero_destructive_migrations": true
+  },
+  "regression_summary": {
+    "alembic_tests_passed": 420,
+    "policy_service_tests_passed": 26,
+    "vulnerability_service_tests_passed": 84,
+    "total_verified_passed": 530,
+    "total_failed": 0,
+    "total_skipped": 0
+  },
+  "protected_resources": {
+    "port_5432_untouched": true,
+    "port_5433_untouched": true,
+    "live_acceptance_runner_unmodified": true
+  }
+}

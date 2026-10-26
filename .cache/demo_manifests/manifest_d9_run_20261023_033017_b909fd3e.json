@@ -1,0 +1,31 @@
+{
+  "baseline_policy_states": {},
+  "created_at": "2026-10-23T03:30:17.030195+00:00",
+  "entities": {
+    "applications": [],
+    "chunk_proof_sets": [],
+    "component_vulnerability_mappings": [],
+    "components": [],
+    "proof_jobs": [],
+    "sbom_uploads": [],
+    "security_policies": [],
+    "segment_proofs": [],
+    "users": [],
+    "verification_certificates": [],
+    "verification_requests": [],
+    "vulnerability_snapshots": []
+  },
+  "errors": [
+    "[2026-10-23T03:30:18.253047+00:00] 'local_auditor_alpha'"
+  ],
+  "run_id": "d9_run_20261023_033017_b909fd3e",
+  "schema_version": "1.0",
+  "status": "failed",
+  "target_fingerprint": {
+    "expected_db": "ZKP_SBOM_LOCAL_DEV",
+    "expected_host": "127.0.0.1",
+    "expected_port": 5433,
+    "expected_revision": "016"
+  },
+  "updated_at": "2026-10-23T03:30:18.253047+00:00"
+}

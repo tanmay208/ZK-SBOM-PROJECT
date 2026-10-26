@@ -1,0 +1,20 @@
+{
+  "status": "prover_failed",
+  "start_timestamp": "2026-10-22T15:16:05.601803+00:00",
+  "end_timestamp": "2026-10-22T15:17:43.323375+00:00",
+  "elapsed_seconds": 97.71900000000096,
+  "per_segment_durations": {
+    "chunk_0_segment_0": 39.359
+  },
+  "total_chunks_processed": 0,
+  "total_segments_verified": 0,
+  "peak_wsl_used_gib": 7.656124114990234,
+  "min_host_avail_gib": 1.7759895324707031,
+  "negative_tests_results": {},
+  "errors": [
+    "Chunk 0 failed"
+  ],
+  "persisted_artifacts": {},
+  "max_segments_limit": 1,
+  "artifacts_directory": ".cache\\d5_evidence\\bounded_run_20261022\\manifest_artifacts"
+}

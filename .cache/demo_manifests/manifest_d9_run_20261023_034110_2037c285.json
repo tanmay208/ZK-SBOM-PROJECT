@@ -1,0 +1,37 @@
+{
+  "baseline_policy_states": {},
+  "created_at": "2026-10-23T03:41:10.297681+00:00",
+  "entities": {
+    "applications": [
+      "45d16186-79fb-402d-b3e5-832c38372e95"
+    ],
+    "chunk_proof_sets": [],
+    "component_vulnerability_mappings": [],
+    "components": [],
+    "proof_jobs": [],
+    "sbom_uploads": [],
+    "security_policies": [
+      "edb597b3-2583-4d37-b9f5-7db236669d0a"
+    ],
+    "segment_proofs": [],
+    "users": [],
+    "verification_certificates": [],
+    "verification_requests": [],
+    "vulnerability_snapshots": [
+      "ca829add-40cf-497c-a24e-d3af60d90ec5"
+    ]
+  },
+  "errors": [
+    "[2026-10-23T03:41:11.352669+00:00] (psycopg2.errors.UndefinedColumn) column \"uploaded_at\" does not exist\nLINE 1: ...= '45d16186-79fb-402d-b3e5-832c38372e95' ORDER BY uploaded_a...\n                                                             ^\n\n[SQL: SELECT id::text, sbom_root FROM sbom.sbom_uploads WHERE application_id = %(aid)s ORDER BY uploaded_at DESC LIMIT 1]\n[parameters: {'aid': '45d16186-79fb-402d-b3e5-832c38372e95'}]\n(Background on this error at: https://sqlalche.me/e/20/f405)"
+  ],
+  "run_id": "d9_run_20261023_034110_2037c285",
+  "schema_version": "1.0",
+  "status": "failed",
+  "target_fingerprint": {
+    "expected_db": "ZKP_SBOM_LOCAL_DEV",
+    "expected_host": "127.0.0.1",
+    "expected_port": 5433,
+    "expected_revision": "016"
+  },
+  "updated_at": "2026-10-23T03:41:11.352669+00:00"
+}
