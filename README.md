@@ -143,20 +143,37 @@ Noir 0.32.0 / Native bb.exe                     PostgreSQL 17
 
 ## 7. Local Development & Verification
 
-### 7.1 Automated Bootstrap
-Run the automated environment bootstrap script from PowerShell:
+### 7.0 Prerequisites & Environment Requirements
+Before initializing the environment from a newly extracted source ZIP:
+- **Node.js & npm:** Node.js >= 18.0.0 and npm (required to install the pinned cryptographic runtime `@noir-lang/backend_barretenberg@0.32.0`, which provides the Barretenberg `@aztec/bb.js@0.46.1` engine).
+- **Python:** Python 3.11+ with `venv` (required for backend microservices and test suites).
+- **C Compiler (Optional):** GCC (e.g. MinGW-w64 on Windows) to compile the native `.bin/bb.exe` launcher from `scripts/bb_launcher.c`. If GCC is absent, the setup script automatically configures `.bin/bb.cmd` as the fallback execution wrapper.
+- **Noir Compiler (Optional):** Noir 0.32.0 (`nargo`) via `noirup -v 0.32.0`. *Note: Circuit compilation is only required if modifying `.nr` circuit source files. Independent proof verification (`bb verify`) and live testing of existing proofs do not require `nargo`.*
+
+### 7.1 Native Cryptographic Runtime Setup (First Step)
+Because platform-specific binaries (`.bin/`) and `node_modules` are properly excluded from the source distribution, initialize the cryptographic runtime first:
+```powershell
+.\scripts\setup_crypto_runtime.ps1
+```
+This script validates Node.js, restores pinned `@noir-lang/backend_barretenberg@0.32.0` (providing `@aztec/bb.js@0.46.1`) via `npm ci`, creates the `.bin/` directory, generates the Windows `bb.cmd` and POSIX `bb` wrappers, compiles `bb.exe` if GCC is available, and executes `bb --help` verification.
+
+### 7.2 Project Context Bootstrap
+Inspect the project context, roadmap status, and safety boundaries:
 ```powershell
 .\bootstrap.ps1
 ```
 
-### 7.2 Native Crypto Tooling Setup
-Build the native Barretenberg launcher and verify the Noir toolchain:
+### 7.3 Backend Verification & Cryptographic Tests
 ```powershell
-.\scripts\setup_crypto_runtime.ps1
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1   # On POSIX: source .venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
+pytest backend/verification_service/tests/test_b1_live_crypto.py -q
+pytest -q
 ```
 
-### 7.3 Frontend Verification
-```bash
+### 7.4 Frontend Verification
+```powershell
 cd frontend
 npm ci
 npm test
@@ -164,14 +181,6 @@ npx tsc --noEmit
 npx eslint .
 npm run build
 npm run dev
-```
-
-### 7.4 Backend Verification
-```bash
-python -m venv .venv
-source .venv/bin/activate  # Or .venv\Scripts\Activate.ps1 on Windows
-pip install -r requirements.txt -r requirements-dev.txt
-pytest -q
 ```
 
 ---
