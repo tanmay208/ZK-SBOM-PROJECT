@@ -73,12 +73,6 @@ Compose does not prove a production network boundary. It publishes no app or gat
 
 The intended property is that a verifier can check the encoded compliance statement without receiving the original SBOM component list. Public inputs, commitments, and status metadata remain observable. Commitments are not encryption; no claim is made that all metadata is non-linkable or every side channel has been excluded.
 
-## Project Status
-
-Development work is recorded complete through Stage 22, including the Stage22.9 final audit. Deployment is Stage 23. The project is not production-deployed or established as production-ready.
-
-Known limits include no live authenticated frontend/backend workflow in the Stage22.9 environment, limited browser/accessibility coverage, no reliable historical Stage22 code/test baseline, and frontend npm test runner is resolved through npx because tsx is not a declared dependency, so clean/offline reproducibility is not established. Full details are in [project status](docs/01_PROJECT/PROJECT_STATUS.md) and the [Stage22 final audit](docs/09_STAGE_REPORTS/STAGE_22_FINAL.md).
-
 ## Validation / Testing
 
 Stage22.9 historically reports 32 frontend tests passed and successful TypeScript typecheck, ESLint, and Next.js production build. In this consolidation, the backend suite passed 533 tests (56 warnings); frontend typecheck, ESLint, and production build passed. The current npm test passed 32 tests after npx fetched the undeclared tsx runner with network access; clean/offline test reproducibility is still not established. Stage22.9 also records a limited 390 px local-browser smoke, not authenticated backend integration.
