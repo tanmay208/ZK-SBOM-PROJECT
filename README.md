@@ -4,7 +4,9 @@
 > **Authoritative Documentation & Governance Root:**
 > All project specifications, security rules, cryptographic parameters, the Official Locked Roadmap V3, and audit registers are consolidated in:
 > [`MASTER_PROJECT_CONTEXT/`](MASTER_PROJECT_CONTEXT/) (see [`MASTER_PROJECT_CONTEXT/README.md`](MASTER_PROJECT_CONTEXT/README.md)).
+> For the complete runtime and technology specification, see [`TECH_STACK_AND_ENVIRONMENT.md`](TECH_STACK_AND_ENVIRONMENT.md).
 > For agent instructions and operating rules, see [`AGENTS.md`](AGENTS.md).
+
 
 ---
 

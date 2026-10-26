@@ -44,3 +44,11 @@ build/
 *.swo
 .DS_Store
 Thumbs.db
+
+# Scratch, Caches, Database Dumps & Heavy Archives
+.cache/
+scratch/
+*.sql
+*.dump
+master_archive/
+archive/
