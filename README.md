@@ -1,5 +1,11 @@
 # Privacy-Preserving Zero-Knowledge SBOM Vulnerability Verification Platform
 
+> [!IMPORTANT]
+> **Authoritative Documentation & Governance:**
+> All project documentation, agent operating rules, locked six-stage roadmap, and session handoffs are consolidated in:
+> [`MASTER_PROJECT_CONTEXT/`](file:///E:/Main%20Project/MASTER_PROJECT_CONTEXT) (see [`MASTER_PROJECT_CONTEXT/README.md`](file:///E:/Main%20Project/MASTER_PROJECT_CONTEXT/README.md)).
+> For cleanup and audit logs, see [`MASTER_PROJECT_CONTEXT/REPOSITORY_CLEANUP_AUDIT.md`](file:///E:/Main%20Project/MASTER_PROJECT_CONTEXT/REPOSITORY_CLEANUP_AUDIT.md).
+
 ## Overview
 
 This research and engineering prototype lets a software supplier create a zero-knowledge proof that an SBOM satisfies a policy against a specified, committed vulnerability snapshot. A verifier can check the proof and, after successful verification, consult a certificate-validation endpoint without receiving the private SBOM component list.
@@ -86,7 +92,8 @@ The Stage21L report documents a historical 1,024-component workload, 32 chunks, 
 - circuits/ and circuits_dev/ — production-profile and development Noir sources/artifacts.
 - segment_* — decomposed segment circuit artifacts.
 - scripts/ — vector, circuit, validation, and archive utilities.
-- archives/ — retained proof/archive evidence.
+- archive/ — reusable project assets and retained proof/archive evidence.
+- master_archive/ — retained historical non-production material (excluded from source ZIP).
 - docker/ and docker-compose.yml — application containers and internal nginx.
 - docs/ — current documentation index and preserved historical reports.
 
