@@ -78,3 +78,7 @@ test_baseline_output.txt
 # Historical Binary Releases & Duplicate Proof ZIPs
 master_archive/historical_releases/*.bak*
 archive/proofs/*.zip
+
+# Scratch circuit working dirs and local compose backups
+circuits_dev/
+docker-compose.local.yml.bak*
