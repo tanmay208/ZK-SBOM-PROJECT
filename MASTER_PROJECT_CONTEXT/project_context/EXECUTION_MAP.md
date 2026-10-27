@@ -22,8 +22,8 @@ $env:DB_SSL_MODE="disable"
 $env:LOCAL_DEV_MODE="true"
 # Ephemeral local-development signing secrets (generate random keys; do not use predictable keys):
 # Example generator: python -c "import secrets; print(secrets.token_hex(32))"
-$env:JWT_SECRET_KEY="***REMOVED***"
-$env:CERTIFICATE_SECRET_KEY="***REMOVED***"
+$env:JWT_SECRET_KEY="<REPLACE_WITH_RANDOM_LOCAL_SECRET>"
+$env:CERTIFICATE_SECRET_KEY="<REPLACE_WITH_RANDOM_LOCAL_SECRET>"
 ```
 
 > [!IMPORTANT]
