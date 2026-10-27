@@ -90,7 +90,7 @@ Noir 0.32.0 / Native bb.exe                     PostgreSQL 17
 
 | Domain | Technology / Specification | Verification Status |
 | :--- | :--- | :--- |
-| **Frontend** | Next.js 15, React 19, TypeScript, Tailwind CSS / Vanilla CSS | 80 automated unit/integration tests passing (0 skips) |
+| **Frontend** | Next.js 15, React 19, TypeScript, Tailwind CSS / Vanilla CSS | 116 automated unit/integration tests passing (0 skips) |
 | **Backend Services** | FastAPI 0.115, Python 3.11, Pydantic v2, SQLAlchemy 2.0 | 1,345 backend unit/integration tests passing (0 skips) |
 | **Cross-Role Suite** | Automated regression across Vendor, Buyer, Admin | 348 automated tests passing (0 failures, 0 skips) |
 | **Database** | PostgreSQL 17, Alembic linear migrations 001 through 016 | Rev 016 applied (Snapshot TTL, tenant isolation, token revocation) |
