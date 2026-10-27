@@ -185,7 +185,17 @@ On 25 October 2026 (03:48 IST), Stage G completed full-stack security hardening,
 ### 4.8 Follow-On Stage D Reassessment & 256-Proof Acceptance Closure
 On 25–26 October 2026, the follow-on Stage D Reassessment resolved all remaining integration and proving gates:
 1. **D9 Category A Live Re-Validation**: 9-step non-proving workflow verified against Docker PostgreSQL 17 port 5435 (`zkp_sbom_g2_integration`) under the 3-role model with 0 fake certificates minted (`scratch/stage-d/20261025_043000/`).
-2. **D5 256-Segment Proving & Category B Resolution**: The 256-segment proof archive `68c06b8e-c7b8-4402-b98e-f6c1f2236cd9.zip` (SHA-256 `60a41c69448e6a59fd9c697d9c7d0d0500198d61c6b38b3100190134906d7bce`) was evaluated and all 256 segment proofs were cryptographically verified in 531.826s with explicit boolean true and zero proof regeneration (`scratch/stage-d/recovery_acceptance_linux_20261025/`).
-3. **Authoritative Certificate Minted**: Active compliance Certificate `81d1a4f0-1ae4-4baf-9716-9081c6ae9f7b` issued and bound to canonical commitments ($R_{\text{SBOM}}$, $R_{\text{VulnDB}}$, $H_{\text{Policy}}$).
-4. **Independent Evidence Audit**: Formally audited on 26 October 2026 02:45 IST (`scratch/stage-d/final_evidence_audit_20261026_0236/final_audit_report.md`).
-5. **Gate Status**: **`STAGE D FINAL STATUS: PASS`**.
+2. **Historical Full Proof Generation & Runner Crash**: On 2026-10-25 (`scratch/stage-d/20261025_failed_run_256_evidence/`), all 256 segment proofs were authentically generated and persisted across 32 chunks over 3h 29m (7,722.73s CPU proving). The runner subsequently crashed during negative rejection testing due to an ORM attribute access (`ProofJob.sbom_upload` instead of `sbom_upload_id` / authoritative commitments).
+3. **Recovery Independent Verification (0 Proof Regeneration)**: On 2026-10-25/26 (`scratch/stage-d/recovery_acceptance_linux_20261025/`), the runner was repaired, the precomputed proof archive `68c06b8e-c7b8-4402-b98e-f6c1f2236cd9.zip` (SHA-256 `60a41c69448e6a59fd9c697d9c7d0d0500198d61c6b38b3100190134906d7bce`) was loaded with zero proof regeneration (`proof_generation_invoked: false`), and all 256 segment proofs were cryptographically verified in 531.826s using Barretenberg 0.46.1. All 6 negative rejection tests passed.
+4. **Authoritative Certificate Minted**: Active compliance Certificate `81d1a4f0-1ae4-4baf-9716-9081c6ae9f7b` issued and bound to canonical commitments ($R_{\text{SBOM}}$, $R_{\text{VulnDB}}$, $H_{\text{Policy}}$).
+5. **Demonstration & Scope Invariants**: Re-running full 256-segment proving during live presentations remains explicitly deferred to avoid host memory exhaustion and 3.5-hour delays. Academic viva readiness is verified; production readiness is NOT claimed, and Gate 5R remains strictly blocked in LOCAL-ONLY mode.
+6. **Independent Evidence Audit**: Formally audited on 26 October 2026 02:45 IST (`scratch/stage-d/final_evidence_audit_20261026_0236/final_audit_report.md`).
+7. **Gate Status**: **`STAGE D FINAL STATUS: PASS`**.
+
+### 4.9 Phase 4.4 Source Package Hardening, Crash-Recovery Audit & Local Commit
+On 26 October 2026 (19:22 IST), Phase 4.4 completed final source package hardening, recovery testing, and local commit (`15726e7919df2f4211d293dfb0fccc765e29ff03`):
+1. **Durable Packaging Publication Protocol**: Implemented crash-safe journaled publication protocol with `.journal.json` and `.prev` rollback in `scripts/package_source_zip.py`; verified all 8 failure-injection recovery scenarios with 100% pass (`--test-recovery`).
+2. **Deterministic Source ZIP**: Published `dist/zkp-sbom-source.zip` (4,988,222 bytes, 949 entries) with SHA-256 `34d2922e3debe173ec5715c3a2478f30bdd6b72f000fb3d27711c35eb1906337`; two-build reproducibility verified bit-for-bit identical.
+3. **Fresh-Extraction Verification**: Extracted to isolated directory; verified runtime setup via `setup_crypto_runtime.ps1`, native `bb.exe` compilation, and live UltraPlonk proof verification (exit code 0; tampered proof rejected with exit code 1).
+4. **Documentation & Version Reconciliation**: Reconciled `@noir-lang/backend_barretenberg@0.32.0` and `@aztec/bb.js@0.46.1` in `README.md` and setup instructions.
+5. **Commit Scope**: Staged and committed strictly `README.md` and `scripts/package_source_zip.py` with 0 unstaged or untracked changes.

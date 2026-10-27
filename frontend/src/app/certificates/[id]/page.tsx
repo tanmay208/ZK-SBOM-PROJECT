@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ApiError } from "@/api/errors";
 import { cn } from "@/lib/utils";
+import { formatTableTimestamp } from "@/lib/dateTime";
 import Link from "next/link";
 import {
   AlertCircle,
@@ -70,7 +71,8 @@ function PublicCertificateDetail({ id }: { id: string }) {
 
   if (error || !cert || cert.reason === "certificate_not_found") {
     const apiError = error instanceof ApiError ? error : null;
-    const isNotFound = apiError?.status === 404 || cert?.reason === "certificate_not_found";
+    const isMalformed = apiError?.status === 422;
+    const isNotFound = apiError?.status === 404 || cert?.reason === "certificate_not_found" || isMalformed;
     const isRetryable = !isNotFound && (!apiError || apiError.status === 0 || apiError.status >= 500);
 
     return (
@@ -86,11 +88,19 @@ function PublicCertificateDetail({ id }: { id: string }) {
         />
         <Alert variant="destructive">
           <AlertCircle className="size-4" />
-          <AlertTitle>{isNotFound ? "Certificate Not Found" : "Error Validating Certificate"}</AlertTitle>
+          <AlertTitle>
+            {isMalformed
+              ? "Invalid Certificate Identifier"
+              : isNotFound
+                ? "Certificate Not Found"
+                : "Error Validating Certificate"}
+          </AlertTitle>
           <AlertDescription className="text-xs mt-1">
-            {isNotFound
-              ? "The requested certificate record does not exist in the authoritative database registry, or the identifier is invalid."
-              : apiError?.message || "An unexpected network error occurred while querying the public certificate."}
+            {isMalformed
+              ? "The provided certificate identifier is not a valid UUID format. Please verify the URL and try again."
+              : isNotFound
+                ? "The requested certificate record does not exist in the authoritative database registry, or the identifier is invalid."
+                : apiError?.message || "An unexpected network error occurred while querying the public certificate."}
           </AlertDescription>
         </Alert>
         <div className="flex items-center gap-2">
@@ -258,7 +268,7 @@ function PublicCertificateDetail({ id }: { id: string }) {
                 <p className="text-xs">
                   Revoked At:{" "}
                   <span className="font-medium">
-                    {cert.revoked_at ? new Date(cert.revoked_at).toLocaleString() : "Timestamp not recorded"}
+                    {cert.revoked_at ? formatTableTimestamp(cert.revoked_at) : "Timestamp not recorded"}
                   </span>
                 </p>
                 <p className="text-[11px] text-destructive/80">

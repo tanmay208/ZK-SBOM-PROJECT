@@ -243,7 +243,7 @@ export default function HomePage() {
                     <span>Private Inputs</span>
                   </div>
                   <h4 className="font-medium text-sm text-foreground">Vendor SBOM Tree</h4>
-                  <p className="text-xs text-muted-foreground">CycloneDX / SPDX JSON parsed into CPE leaves and Poseidon Sparse Merkle Tree ($R_{"{SBOM}"}$).</p>
+                  <p className="text-xs text-muted-foreground">CycloneDX / SPDX JSON parsed into CPE leaves and Poseidon Sparse Merkle Tree (R_SBOM).</p>
                   <div className="pt-2">
                     <Badge variant="outline" className="text-[10px] font-mono text-muted-foreground">Hidden Witness</Badge>
                   </div>
@@ -256,7 +256,7 @@ export default function HomePage() {
                     <span>Public Inputs</span>
                   </div>
                   <h4 className="font-medium text-sm text-foreground">Authoritative State</h4>
-                  <p className="text-xs text-muted-foreground">Frozen CVE Vulnerability snapshot ($R_{"{VulnDB}"}$) and canonical security policy hash ($H_{"{Policy}"}$).</p>
+                  <p className="text-xs text-muted-foreground">Frozen CVE Vulnerability snapshot (R_VulnDB) and canonical security policy hash (H_Policy).</p>
                   <div className="pt-2">
                     <Badge variant="info" className="text-[10px] font-mono">Public Commitments</Badge>
                   </div>
@@ -358,7 +358,7 @@ export default function HomePage() {
               </CardHeader>
               <CardContent className="space-y-2.5 text-sm text-muted-foreground">
                 <p>
-                  Zero-Knowledge Proofs (ZKPs) allow a vendor to prove: <em>&ldquo;My software components contain zero CVEs listed in approved vulnerability snapshot $S$ under security policy $P$&rdquo;</em>.
+                  Zero-Knowledge Proofs (ZKPs) allow a vendor to prove: <em>&ldquo;My software components contain zero CVEs listed in approved vulnerability snapshot S under security policy P&rdquo;</em>.
                 </p>
                 <p>
                   The buyer independently verifies the mathematical proof without learning what components exist in the vendor&apos;s product.
@@ -386,75 +386,111 @@ export default function HomePage() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {/* Step 1 */}
-            <div className="rounded-xl border border-border/80 bg-card p-6 space-y-3 shadow-2xs">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-xs font-bold text-primary px-2.5 py-1 rounded-md bg-primary/10">01</span>
-                <FileCode2 className="size-5 text-muted-foreground" />
+            <div className="flex flex-col justify-between h-full rounded-xl border border-border/80 bg-card p-6 sm:p-7 shadow-2xs hover:shadow-xs hover:border-border transition-all">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between pb-1">
+                  <span className="font-mono text-xs font-bold text-primary px-2.5 py-1 rounded-md bg-primary/10">01</span>
+                  <FileCode2 className="size-5 text-muted-foreground/80" />
+                </div>
+                <h3 className="font-semibold text-base sm:text-lg text-foreground tracking-tight pt-1">SBOM Canonicalization</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed flex-1 pt-1 break-words">
+                  Vendor uploads a CycloneDX or SPDX JSON SBOM. The ingestion parser extracts CPE identifiers, normalizes versions, and computes Poseidon leaf hashes to build a Sparse Merkle Tree commitment (R_SBOM).
+                </p>
               </div>
-              <h3 className="font-semibold text-base text-foreground">SBOM Canonicalization</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                Vendor uploads a CycloneDX or SPDX JSON SBOM. The ingestion parser extracts CPE identifiers, normalizes versions, and computes Poseidon leaf hashes to build a Sparse Merkle Tree commitment ($R_{"{SBOM}"}$).
-              </p>
+              <div className="pt-3.5 mt-4 border-t border-border/50 flex items-center justify-between text-[11px] font-mono text-muted-foreground">
+                <span>Commitment</span>
+                <span className="text-foreground font-medium">R_SBOM</span>
+              </div>
             </div>
 
             {/* Step 2 */}
-            <div className="rounded-xl border border-border/80 bg-card p-6 space-y-3 shadow-2xs">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-xs font-bold text-primary px-2.5 py-1 rounded-md bg-primary/10">02</span>
-                <Database className="size-5 text-muted-foreground" />
+            <div className="flex flex-col justify-between h-full rounded-xl border border-border/80 bg-card p-6 sm:p-7 shadow-2xs hover:shadow-xs hover:border-border transition-all">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between pb-1">
+                  <span className="font-mono text-xs font-bold text-primary px-2.5 py-1 rounded-md bg-primary/10">02</span>
+                  <Database className="size-5 text-muted-foreground/80" />
+                </div>
+                <h3 className="font-semibold text-base sm:text-lg text-foreground tracking-tight pt-1">Vulnerability Snapshot Freezing</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed flex-1 pt-1 break-words">
+                  Authoritative CVE intelligence from trusted feeds is ingested and frozen into an immutable Merkle root snapshot (R_VulnDB). Freezing eliminates race conditions during verification.
+                </p>
               </div>
-              <h3 className="font-semibold text-base text-foreground">Vulnerability Snapshot Freezing</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                Authoritative CVE intelligence from trusted feeds is ingested and frozen into an immutable Merkle root snapshot ($R_{"{VulnDB}"}$). Freezing eliminates race conditions during verification.
-              </p>
+              <div className="pt-3.5 mt-4 border-t border-border/50 flex items-center justify-between text-[11px] font-mono text-muted-foreground">
+                <span>Snapshot Root</span>
+                <span className="text-foreground font-medium">R_VulnDB</span>
+              </div>
             </div>
 
             {/* Step 3 */}
-            <div className="rounded-xl border border-border/80 bg-card p-6 space-y-3 shadow-2xs">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-xs font-bold text-primary px-2.5 py-1 rounded-md bg-primary/10">03</span>
-                <Scale className="size-5 text-muted-foreground" />
+            <div className="flex flex-col justify-between h-full rounded-xl border border-border/80 bg-card p-6 sm:p-7 shadow-2xs hover:shadow-xs hover:border-border transition-all">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between pb-1">
+                  <span className="font-mono text-xs font-bold text-primary px-2.5 py-1 rounded-md bg-primary/10">03</span>
+                  <Scale className="size-5 text-muted-foreground/80" />
+                </div>
+                <h3 className="font-semibold text-base sm:text-lg text-foreground tracking-tight pt-1">Deterministic Policy Binding</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed flex-1 pt-1 break-words">
+                  Security rules (e.g. CVSS severity thresholds, banned CVE lists, package exemptions) are canonicalized into a deterministic SHA-256 policy digest (H_Policy).
+                </p>
               </div>
-              <h3 className="font-semibold text-base text-foreground">Deterministic Policy Binding</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                Security rules (e.g. CVSS severity thresholds, banned CVE lists, package exemptions) are canonicalized into a deterministic SHA-256 policy digest ($H_{"{Policy}"}$).
-              </p>
+              <div className="pt-3.5 mt-4 border-t border-border/50 flex items-center justify-between text-[11px] font-mono text-muted-foreground">
+                <span>Policy Digest</span>
+                <span className="text-foreground font-medium">H_Policy</span>
+              </div>
             </div>
 
             {/* Step 4 */}
-            <div className="rounded-xl border border-border/80 bg-card p-6 space-y-3 shadow-2xs">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-xs font-bold text-primary px-2.5 py-1 rounded-md bg-primary/10">04</span>
-                <Cpu className="size-5 text-muted-foreground" />
+            <div className="flex flex-col justify-between h-full rounded-xl border border-border/80 bg-card p-6 sm:p-7 shadow-2xs hover:shadow-xs hover:border-border transition-all">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between pb-1">
+                  <span className="font-mono text-xs font-bold text-primary px-2.5 py-1 rounded-md bg-primary/10">04</span>
+                  <Cpu className="size-5 text-muted-foreground/80" />
+                </div>
+                <h3 className="font-semibold text-base sm:text-lg text-foreground tracking-tight pt-1">ZK Proof Generation</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed flex-1 pt-1 break-words">
+                  The ZKP service executes Noir 0.32.0 ACIR circuits with Barretenberg native runtimes, generating a compact 2,144-byte UltraPlonk proof body (excluding public inputs) that non-membership holds without disclosing witness leaves.
+                </p>
               </div>
-              <h3 className="font-semibold text-base text-foreground">ZK Proof Generation</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                The ZKP service executes Noir 0.32.0 ACIR circuits with Barretenberg native runtimes, generating a compact 2,144-byte UltraPlonk proof body (excluding public inputs) that non-membership holds without disclosing witness leaves.
-              </p>
+              <div className="pt-3.5 mt-4 border-t border-border/50 flex items-center justify-between text-[11px] font-mono text-muted-foreground">
+                <span>Proof Body</span>
+                <span className="text-foreground font-medium">2,144 Bytes</span>
+              </div>
             </div>
 
             {/* Step 5 */}
-            <div className="rounded-xl border border-border/80 bg-card p-6 space-y-3 shadow-2xs">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-xs font-bold text-primary px-2.5 py-1 rounded-md bg-primary/10">05</span>
-                <CheckCircle2 className="size-5 text-muted-foreground" />
+            <div className="flex flex-col justify-between h-full rounded-xl border border-border/80 bg-card p-6 sm:p-7 shadow-2xs hover:shadow-xs hover:border-border transition-all">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between pb-1">
+                  <span className="font-mono text-xs font-bold text-primary px-2.5 py-1 rounded-md bg-primary/10">05</span>
+                  <CheckCircle2 className="size-5 text-muted-foreground/80" />
+                </div>
+                <h3 className="font-semibold text-base sm:text-lg text-foreground tracking-tight pt-1">Cryptographic Verification</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed flex-1 pt-1 break-words">
+                  The verifier checks public-input bindings (R_SBOM, R_VulnDB, H_Policy) against the UltraPlonk proof body for the recorded proof job; performance depends on the proof package and verification workload. Detached third-party package verification is planned for Stage D6.
+                </p>
               </div>
-              <h3 className="font-semibold text-base text-foreground">Cryptographic Verification</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                The verifier checks public-input bindings ($R_{"{SBOM}"}, R_{"{VulnDB}"}, H_{"{Policy}"}$) against the UltraPlonk proof body for the recorded proof job; performance depends on the proof package and verification workload. Detached third-party package verification is planned for Stage D6.
-              </p>
+              <div className="pt-3.5 mt-4 border-t border-border/50 flex items-center justify-between text-[11px] font-mono text-muted-foreground">
+                <span>Public Bindings</span>
+                <span className="text-foreground font-medium">R_SBOM, R_VulnDB, H_Policy</span>
+              </div>
             </div>
 
             {/* Step 6 */}
-            <div className="rounded-xl border border-border/80 bg-card p-6 space-y-3 shadow-2xs">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-xs font-bold text-primary px-2.5 py-1 rounded-md bg-primary/10">06</span>
-                <Award className="size-5 text-muted-foreground" />
+            <div className="flex flex-col justify-between h-full rounded-xl border border-border/80 bg-card p-6 sm:p-7 shadow-2xs hover:shadow-xs hover:border-border transition-all">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between pb-1">
+                  <span className="font-mono text-xs font-bold text-primary px-2.5 py-1 rounded-md bg-primary/10">06</span>
+                  <Award className="size-5 text-muted-foreground/80" />
+                </div>
+                <h3 className="font-semibold text-base sm:text-lg text-foreground tracking-tight pt-1">Tamper-Evident Certificate Issuance</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed flex-1 pt-1 break-words">
+                  A tamper-evident cryptographic certificate record is generated with a durable UUID, timestamp, public commitments, and verification status, publicly verifiable by ID and revocable via administrator controls.
+                </p>
               </div>
-              <h3 className="font-semibold text-base text-foreground">Tamper-Evident Certificate Issuance</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                A tamper-evident cryptographic certificate record is generated with a durable UUID, timestamp, public commitments, and verification status, publicly verifiable by ID and revocable via administrator controls.
-              </p>
+              <div className="pt-3.5 mt-4 border-t border-border/50 flex items-center justify-between text-[11px] font-mono text-muted-foreground">
+                <span>Verification Output</span>
+                <span className="text-foreground font-medium">Tamper-Evident Certificate</span>
+              </div>
             </div>
           </div>
         </div>
@@ -587,7 +623,7 @@ export default function HomePage() {
                 <span>What Is Proven & Exposed</span>
               </div>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                A valid UltraPlonk proof establishes that component CPEs committed in $R_{"{SBOM}"}$ match zero CVEs in $R_{"{VulnDB}"}$ under $H_{"{Policy}"}$. While the private witness is protected from component disclosure, public commitments and verification metadata remain visible.
+                A valid UltraPlonk proof establishes that component CPEs committed in R_SBOM match zero CVEs in R_VulnDB under H_Policy. While the private witness is protected from component disclosure, public commitments and verification metadata remain visible.
               </p>
             </div>
 
@@ -683,11 +719,11 @@ export default function HomePage() {
             </div>
           </div>
 
-          <div className="border-t border-border/60 pt-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-            <p>
-              Cryptographic Engine: Noir 0.32.0 ACIR &bull; Barretenberg 0.46.1 UltraPlonk &bull; Poseidon Sponge ($t=2, t=3$)
+          <div className="border-t border-border/60 pt-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-center sm:text-left">
+            <p className="leading-relaxed">
+              Cryptographic Engine: Noir 0.32.0 ACIR &bull; Barretenberg 0.46.1 UltraPlonk &bull; Poseidon Sponge (t=2, t=3)
             </p>
-            <p className="font-mono text-[11px] text-muted-foreground">
+            <p className="font-mono text-[11px] text-muted-foreground whitespace-nowrap">
               Operating Mode: LOCAL-ONLY &bull; Port 5433
             </p>
           </div>

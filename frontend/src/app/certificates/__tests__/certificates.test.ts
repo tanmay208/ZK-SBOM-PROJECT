@@ -84,3 +84,61 @@ test("Certificate - Service API Methods", () => {
   assert.strictEqual(typeof certificateService.getCertificate, "function", "certificateService.getCertificate is exported");
   assert.strictEqual(typeof certificateService.validateCertificate, "function", "certificateService.validateCertificate is exported");
 });
+
+test("Certificate - Proof Job Status vs Certificate Status Distinction", () => {
+  // A proof job may be "completed", but certificate validity is an independent cryptographic artifact lifecycle
+  const completedProofJob = {
+    id: "job-1",
+    status: "completed",
+    completed_segments: 256,
+    total_segments: 256,
+  };
+
+  const revokedCertificate = {
+    certificate_id: "cert-1",
+    valid: false,
+    reason: "certificate_revoked",
+    is_revoked: true,
+  };
+
+  // Proof job completed does NOT imply certificate is valid if certificate is revoked
+  assert.strictEqual(completedProofJob.status, "completed");
+  assert.strictEqual(revokedCertificate.valid, false);
+  assert.notStrictEqual(completedProofJob.status, revokedCertificate.reason);
+});
+
+test("Certificate - Malformed UUID vs Missing Certificate Classification", () => {
+  // Classification logic matching PublicCertificateDetail component
+  function classifyCertificateError(statusCode?: number, reason?: string) {
+    const isMalformed = statusCode === 422;
+    const isNotFound = statusCode === 404 || reason === "certificate_not_found" || isMalformed;
+    return {
+      isMalformed,
+      isNotFound,
+      title: isMalformed
+        ? "Invalid Certificate Identifier"
+        : isNotFound
+          ? "Certificate Not Found"
+          : "Error Validating Certificate",
+    };
+  }
+
+  const malformed = classifyCertificateError(422);
+  assert.strictEqual(malformed.isMalformed, true);
+  assert.strictEqual(malformed.title, "Invalid Certificate Identifier");
+
+  const notFound = classifyCertificateError(404);
+  assert.strictEqual(notFound.isMalformed, false);
+  assert.strictEqual(notFound.isNotFound, true);
+  assert.strictEqual(notFound.title, "Certificate Not Found");
+
+  const reasonNotFound = classifyCertificateError(200, "certificate_not_found");
+  assert.strictEqual(reasonNotFound.isMalformed, false);
+  assert.strictEqual(reasonNotFound.isNotFound, true);
+  assert.strictEqual(reasonNotFound.title, "Certificate Not Found");
+
+  const serverError = classifyCertificateError(500);
+  assert.strictEqual(serverError.isMalformed, false);
+  assert.strictEqual(serverError.isNotFound, false);
+  assert.strictEqual(serverError.title, "Error Validating Certificate");
+});

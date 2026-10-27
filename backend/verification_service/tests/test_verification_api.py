@@ -711,7 +711,9 @@ def test_copied_jwt_token_cannot_bypass_revocation():
 
     user_id = uuid4()
     now = datetime.now(timezone.utc)
-    secret = "a7d2e3f8981b2c45358169a8b122718e0018a169b2d861d8481ff23184b2e8a1"
+    orig_cert_secret = os.environ.get("CERTIFICATE_SECRET_KEY")
+    import secrets as pysecrets
+    secret = pysecrets.token_hex(32)
     os.environ["CERTIFICATE_SECRET_KEY"] = secret
 
     job = ProofJob(id=uuid4(), sbom_upload_id=uuid4(), snapshot_id=uuid4(),
@@ -765,6 +767,10 @@ def test_copied_jwt_token_cannot_bypass_revocation():
 
     app.dependency_overrides.pop(get_session, None)
     db.close()
+    if orig_cert_secret is not None:
+        os.environ["CERTIFICATE_SECRET_KEY"] = orig_cert_secret
+    else:
+        os.environ.pop("CERTIFICATE_SECRET_KEY", None)
 
 
 # ---------------------------------------------------------------------------

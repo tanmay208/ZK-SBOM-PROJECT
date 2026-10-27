@@ -14,6 +14,7 @@ import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { authService } from "@/api/services/authService";
 import { ApiError } from "@/api/errors";
+import { formatTableTimestamp } from "@/lib/dateTime";
 import {
   Check,
   Copy,
@@ -313,7 +314,7 @@ export function ProfileContent() {
                     Created At
                   </span>
                   <span className="font-mono text-[11px] text-foreground mt-0.5 block">
-                    {user?.created_at ? new Date(user.created_at).toLocaleString() : "—"}
+                    {formatTableTimestamp(user?.created_at)}
                   </span>
                 </div>
                 <div className="rounded-lg bg-muted/40 p-3 border border-border/50">
@@ -321,7 +322,7 @@ export function ProfileContent() {
                     Last Updated
                   </span>
                   <span className="font-mono text-[11px] text-foreground mt-0.5 block">
-                    {user?.updated_at ? new Date(user.updated_at).toLocaleString() : "—"}
+                    {formatTableTimestamp(user?.updated_at)}
                   </span>
                 </div>
               </div>

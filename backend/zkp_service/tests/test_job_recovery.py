@@ -1036,3 +1036,127 @@ class TestJobStateMachineInvariants:
         assert seg.proof_artifact == "genuine_proof_b64"
 
 
+class TestZKPJobObservabilityAndRevocationSemantics:
+    """Targeted regression tests for job status semantics, revocation root-cause, and observability."""
+
+    def test_proof_job_rejects_revoked_status_transition(self, sqlite_db_session) -> None:
+        """Verify ProofJob has NO 'revoked' status in its state machine (AUD-A-003 / Phase 2 Root Cause)."""
+        from zkp_service.app.repositories.zkp_repository import ZKPRepository, ALLOWED_JOB_TRANSITIONS
+
+        # 'revoked' is not a valid state for ProofJob
+        assert "revoked" not in ALLOWED_JOB_TRANSITIONS
+        for state, targets in ALLOWED_JOB_TRANSITIONS.items():
+            assert "revoked" not in targets, f"'revoked' must not be an allowed target from state '{state}'"
+
+        db, _ = sqlite_db_session
+        repo = ZKPRepository(db)
+        job = ProofJob(
+            id=uuid.uuid4(),
+            sbom_upload_id=uuid.uuid4(),
+            snapshot_id=uuid.uuid4(),
+            policy_id=uuid.uuid4(),
+            status="running",
+        )
+        db.add(job)
+        db.commit()
+
+        # Attempting transition to 'revoked' must raise ValueError
+        with pytest.raises(ValueError, match="Illegal proof job transition"):
+            repo.update_job_status(job.id, "revoked")
+
+    def test_long_running_worker_holding_lock_remains_running_under_repeated_probes(
+        self, sqlite_db_session
+    ) -> None:
+        """Verify that an active long-running worker holding the job lock remains running under repeated recovery probes."""
+        from zkp_service.app.core.job_lock import get_job_lock_manager, reconcile_abandoned_job
+
+        db, engine = sqlite_db_session
+        job = ProofJob(
+            id=uuid.uuid4(),
+            sbom_upload_id=uuid.uuid4(),
+            snapshot_id=uuid.uuid4(),
+            policy_id=uuid.uuid4(),
+            status="running",
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(job)
+        db.commit()
+
+        mgr = get_job_lock_manager(engine)
+        worker_lock = mgr.acquire_worker_lock(job.id)
+
+        try:
+            # Simulate 10 successive polling intervals from frontend or monitoring
+            for _ in range(10):
+                reconciled = reconcile_abandoned_job(db, job)
+                assert reconciled is False, "Reconciliation must not alter a job whose worker holds the lock"
+                db.refresh(job)
+                assert job.status == "running", "Job must remain running while worker executes"
+                assert job.completed_at is None
+        finally:
+            worker_lock.release()
+
+    def test_proof_job_response_serialization_with_chunk_and_segment_telemetry(
+        self, sqlite_db_session
+    ) -> None:
+        """Verify ProofJobResponse serializes chunks and segments for truthful UI observability."""
+        from zkp_service.app.schemas.zkp_schemas import ProofJobResponse
+
+        db, _ = sqlite_db_session
+        job_id = uuid.uuid4()
+        chunk_id = uuid.uuid4()
+        job = ProofJob(
+            id=job_id,
+            sbom_upload_id=uuid.uuid4(),
+            snapshot_id=uuid.uuid4(),
+            policy_id=uuid.uuid4(),
+            status="running",
+            created_at=datetime.now(timezone.utc),
+        )
+        chunk = ChunkProofSet(
+            id=chunk_id,
+            proof_job_id=job_id,
+            chunk_index=0,
+            total_chunks=32,
+            component_start=0,
+            component_count=32,
+            status="running",
+            created_at=datetime.now(timezone.utc),
+        )
+        seg0 = SegmentProof(
+            id=uuid.uuid4(),
+            chunk_id=chunk_id,
+            chunk_index=0,
+            total_chunks=32,
+            segment_index=0,
+            status="completed",
+            created_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(timezone.utc),
+        )
+        seg1 = SegmentProof(
+            id=uuid.uuid4(),
+            chunk_id=chunk_id,
+            chunk_index=0,
+            total_chunks=32,
+            segment_index=1,
+            status="pending",
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add_all([job, chunk, seg0, seg1])
+        db.commit()
+        db.refresh(job)
+
+        response = ProofJobResponse.model_validate(job)
+        assert response.id == job_id
+        assert response.status == "running"
+        assert len(response.chunks) == 1
+        assert response.chunks[0].chunk_index == 0
+        assert len(response.chunks[0].segments) == 2
+
+        # Compute telemetry metrics exactly as done in frontend
+        completed_segs = sum(
+            1 for c in response.chunks for s in c.segments if s.status == "completed"
+        )
+        assert completed_segs == 1
+
+

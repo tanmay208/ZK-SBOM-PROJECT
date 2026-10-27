@@ -133,6 +133,8 @@ test("API Service Endpoints conform to consistent route contracts", async () => 
     const { metricsService } = await import("../services/metricsService");
     const { proofService } = await import("../services/proofService");
     const { sbomService } = await import("../services/sbomService");
+    const { applicationService } = await import("../services/applicationService");
+    const { adminService } = await import("../services/adminService");
 
     // Test freeze snapshot endpoint
     await vulnerabilityService.freeze("test-uuid-1");
@@ -153,6 +155,14 @@ test("API Service Endpoints conform to consistent route contracts", async () => 
     // Test sbom list service call
     await sbomService.list();
     assert.ok(recordedCalls.some(c => c.url.includes("/api/v1/sbom") && c.method === "GET"));
+
+    // Test application list service call
+    await applicationService.list();
+    assert.ok(recordedCalls.some(c => c.url.includes("/api/v1/applications") && c.method === "GET"));
+
+    // Test admin list users service call
+    await adminService.listUsers();
+    assert.ok(recordedCalls.some(c => c.url.includes("/api/v1/admin/users") && c.method === "GET"));
   } finally {
     globalThis.fetch = originalFetch;
   }

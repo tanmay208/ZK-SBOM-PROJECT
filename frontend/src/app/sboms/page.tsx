@@ -17,6 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { formatTableTimestamp } from "@/lib/dateTime";
 import { ApiError } from "@/api/errors";
 import Link from "next/link";
 import {
@@ -412,11 +413,7 @@ function SbomList() {
 
                           {/* Created Date */}
                           <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                            {new Date(sbom.created_at).toLocaleDateString(undefined, {
-                              year: "numeric",
-                              month: "short",
-                              day: "numeric",
-                            })}
+                            {formatTableTimestamp(sbom.created_at)}
                           </TableCell>
 
                           {/* Row Actions */}
@@ -603,7 +600,7 @@ function SbomList() {
               {/* Timestamp */}
               <div className="flex items-center gap-1.5 text-muted-foreground text-[11px]">
                 <Calendar className="size-3.5" />
-                <span>Uploaded: {new Date(selectedSbom.created_at).toLocaleString()}</span>
+                <span>Uploaded: {formatTableTimestamp(selectedSbom.created_at)}</span>
               </div>
 
               {/* Privacy Notice */}

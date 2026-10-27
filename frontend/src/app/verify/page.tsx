@@ -17,6 +17,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ApiError } from "@/api/errors";
 import { cn } from "@/lib/utils";
+import { formatTableTimestamp } from "@/lib/dateTime";
 import Link from "next/link";
 import { VerificationResponse } from "@/api/types";
 import {
@@ -535,7 +536,7 @@ function VerificationForm() {
                       <div className="flex items-center justify-between">
                         <span className="text-muted-foreground">Verified At:</span>
                         <span className="text-[11px] text-foreground">
-                          {new Date(verificationResult.verified_at).toLocaleString()}
+                          {formatTableTimestamp(verificationResult.verified_at)}
                         </span>
                       </div>
                     )}

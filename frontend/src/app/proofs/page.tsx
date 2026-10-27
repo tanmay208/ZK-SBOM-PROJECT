@@ -17,6 +17,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { ApiError } from "@/api/errors";
+import { formatTableTimestamp } from "@/lib/dateTime";
+import { calculateProofEta } from "@/lib/etaCalculator";
 import Link from "next/link";
 import {
   AlertCircle,
@@ -322,47 +324,65 @@ function ProofList() {
                     <TableRow className="hover:bg-transparent">
                       <TableHead className="font-semibold text-xs">Job ID</TableHead>
                       <TableHead className="font-semibold text-xs">SBOM Reference</TableHead>
-                      <TableHead className="font-semibold text-xs">Status</TableHead>
-                      <TableHead className="font-semibold text-xs">Created At</TableHead>
+                      <TableHead className="font-semibold text-xs">Status & Progress</TableHead>
+                      <TableHead className="font-semibold text-xs">Created At (IST)</TableHead>
                       <TableHead className="font-semibold text-xs text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredProofs.map((proof) => (
-                      <TableRow key={proof.id} className="transition-colors hover:bg-muted/30">
-                        <TableCell className="font-mono text-xs">
-                          <span title={proof.id}>{proof.id.slice(0, 8)}...</span>
-                        </TableCell>
+                    {filteredProofs.map((proof) => {
+                      const proofEta = calculateProofEta(proof);
+                      return (
+                        <TableRow key={proof.id} className="transition-colors hover:bg-muted/30">
+                          <TableCell className="font-mono text-xs">
+                            <span title={proof.id}>{proof.id.slice(0, 8)}...</span>
+                          </TableCell>
 
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          <span title={proof.sbom_upload_id}>{proof.sbom_upload_id.slice(0, 8)}...</span>
-                        </TableCell>
+                          <TableCell className="font-mono text-xs text-muted-foreground">
+                            <span title={proof.sbom_upload_id}>{proof.sbom_upload_id.slice(0, 8)}...</span>
+                          </TableCell>
 
-                        <TableCell>
-                          <StatusPill status={proof.status} />
-                        </TableCell>
+                          <TableCell>
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center gap-1.5">
+                                <StatusPill status={proof.status} />
+                                {proofEta.isStale && (
+                                  <Badge variant="destructive" className="text-[9px] px-1.5 py-0 h-4">
+                                    Stale
+                                  </Badge>
+                                )}
+                              </div>
+                              {proof.chunks && proof.chunks.length > 0 && proof.status !== "failed" && (
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-[10px] font-mono text-muted-foreground">
+                                    {proofEta.completedSegments} / {proofEta.totalSegments} segs ({proofEta.progressPercent}%)
+                                  </span>
+                                  {proof.status === "running" && (
+                                    <span className="text-[10px] text-primary/90 font-medium">
+                                      ETA: {proofEta.formattedRemainingTime}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </TableCell>
 
-                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                          {new Date(proof.created_at).toLocaleString(undefined, {
-                            year: "numeric",
-                            month: "short",
-                            day: "numeric",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </TableCell>
+                          <TableCell className="text-xs text-muted-foreground whitespace-nowrap font-mono">
+                            {formatTableTimestamp(proof.created_at)}
+                          </TableCell>
 
-                        <TableCell className="text-right">
-                          <Link
-                            href={`/proofs/${proof.id}`}
-                            className={cn(buttonVariants({ variant: "outline", size: "sm" }), "h-7 text-xs px-2.5 gap-1")}
-                          >
-                            <Eye className="size-3" />
-                            <span>View</span>
-                          </Link>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                          <TableCell className="text-right">
+                            <Link
+                              href={`/proofs/${proof.id}`}
+                              className={cn(buttonVariants({ variant: "outline", size: "sm" }), "h-7 text-xs px-2.5 gap-1")}
+                            >
+                              <Eye className="size-3" />
+                              <span>View</span>
+                            </Link>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>

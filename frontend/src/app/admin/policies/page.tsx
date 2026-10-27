@@ -373,7 +373,7 @@ function PolicyManagement() {
           <div className="rounded-lg bg-blue-500/5 border border-blue-500/20 p-3 mt-4 text-[11px] text-muted-foreground leading-relaxed flex items-start gap-2.5">
             <Info className="size-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
             <div>
-              <strong className="text-foreground">Deterministic Digest:</strong> The backend computes the SHA-256 canonical hash of the policy parameters. This commitment is embedded directly into the UltraPlonk public inputs ($H_{"{Policy}"}$).
+              <strong className="text-foreground">Deterministic Digest:</strong> The backend computes the SHA-256 canonical hash of the policy parameters. This commitment is embedded directly into the UltraPlonk public inputs (H_Policy).
             </div>
           </div>
         </div>

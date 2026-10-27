@@ -43,11 +43,12 @@ $$\mathbf{Stage\ A \longrightarrow Stage\ B \longrightarrow Stage\ C \longrighta
 
 ## 3. Stage D Forensic Audit & Limitations Register
 
-### 3.1 Limitation 1 / Module D5: Full 256-Segment Proving (`DEFERRED / UNVERIFIED / BOUNDED PASS AT 1 SEGMENT`)
-- **Evidence Status**: `DEFERRED / UNVERIFIED / BOUNDED PASS AT 1 SEGMENT`.
-  - Manifest: `.cache/d5_manifests/manifest_d5_live_256_acceptance_20261022.json` (SHA-256: `3ba21e092227f8cbd6de7c07ce147763e93c4f9da7bbd71833edb93a5dd02f8a`).
-  - Segment `chunk_0_segment_0` passed live in 83.25 seconds. During segment `chunk_0_segment_1`, host RAM fell to 1.54 GiB, breaching the 2.0 GiB safety floor. The resource watchdog acted immediately, terminating the guest process within 1.0s.
-  - Accounting: 1 verified, 1 aborted, 254 unattempted. Full 256-segment proving remains explicitly **DEFERRED / UNVERIFIED**.
+### 3.1 Limitation 1 / Module D5: Full 256-Segment Proving (`VERIFIED OFFLINE / LIVE RE-GENERATION DEFERRED`)
+- **Evidence Status**: `STAGE D FINAL STATUS: PASS` (Historical generation verified, offline verification passed; live re-generation during presentations deferred).
+  - **Historical Full Proof Generation**: On 2026-10-25 (`scratch/stage-d/20261025_failed_run_256_evidence/`), all 256 segment proofs were authentically generated and persisted across 32 chunks over 3h 29m (7,722.73s CPU proving). The original runner subsequently failed during negative rejection testing due to an ORM attribute mismatch (`'ProofJob' object has no attribute 'sbom_upload'`).
+  - **Recovery & Cryptographic Verification**: On 2026-10-25/26 (`scratch/stage-d/recovery_acceptance_linux_20261025/`), the runner repaired the attribute access, reused the verified proof archive `68c06b8e-c7b8-4402-b98e-f6c1f2236cd9.zip` (SHA-256 `60a41c69448e6a59fd9c697d9c7d0d0500198d61c6b38b3100190134906d7bce`) with zero proof regeneration (`proof_generation_invoked: false`), and cryptographically verified all 256 segment proofs in 531.826s using Barretenberg 0.46.1. All 6 negative tests passed, and active Certificate `81d1a4f0-1ae4-4baf-9716-9081c6ae9f7b` was minted.
+  - **Live Demonstration Deferral**: Re-running full 256-segment generation from scratch during live presentations remains explicitly **DEFERRED** to prevent host RAM exhaustion and 3.5-hour runtimes. Live demonstrations rely on the bounded 1-segment proving workflow (`chunk_0_segment_0` in 83.25s) and offline verification of the 256-proof archive.
+  - **Scope Limitation**: Academic viva readiness is verified; production readiness is NOT claimed, and Gate 5R remains strictly blocked in LOCAL-ONLY mode.
 
 ### 3.2 Limitation 2 / Module D9: Live Acceptance Workflow (`RESOLVED / CATEGORY A FULL PASS / CATEGORY B DEFERRED`)
 - **Evidence Status**: `CATEGORY A PASS / CATEGORY B DEFERRED`.
@@ -132,7 +133,7 @@ The next user task is the **Live UI Walkthrough** (demonstration of the actual i
 ### 6.3 Honest Defense / Expo Disclosures
 - **Compliant vs Vulnerable**: Policy threshold is 70 (`CVSS 7.0`). Compliant fixture (`certifi`) has score 37 (`CVSS 3.7`) and satisfies `37 <= 70`. Vulnerable fixture (`urllib3`) has score 75 (`CVSS 7.5`) and fails `75 <= 70`.
 - **Feed Scope**: The local demo feed's `NVD` label does not imply real-time synchronization with the live NIST NVD API; live external feed sync is documented as future work.
-- **Proving Status**: This non-proving workflow validated fail-closed integration. Full 256-segment proving is deferred/unverified due to host memory limits.
+- **Proving Status**: This non-proving workflow validated fail-closed integration. Live regeneration of full 256-segment proofs during demonstration is deferred due to host memory limits, while authoritative offline verification of all 256 proofs is passed in 531.826s with Certificate 81d1a4f0-... minted.
 
 
 

@@ -20,9 +20,15 @@ $env:DB_USER="postgres"
 $env:DB_PASSWORD="<ephemeral_container_password>"
 $env:DB_SSL_MODE="disable"
 $env:LOCAL_DEV_MODE="true"
-$env:JWT_SECRET_KEY="<REPLACE_WITH_RANDOM_LOCAL_SECRET>"
-$env:CERTIFICATE_SECRET_KEY="<REPLACE_WITH_RANDOM_LOCAL_SECRET>"
+# Ephemeral local-development signing secrets (generate random keys; do not use predictable keys):
+# Example generator: python -c "import secrets; print(secrets.token_hex(32))"
+$env:JWT_SECRET_KEY="***REMOVED***"
+$env:CERTIFICATE_SECRET_KEY="***REMOVED***"
 ```
+
+> [!IMPORTANT]
+> **Secret Management Boundary**: Signing keys are strictly for ephemeral local development and testing. Production deployments must inject high-entropy secrets (minimum 256 bits) from a secure secrets manager (e.g. AWS Secrets Manager, HashiCorp Vault, or encrypted deployment environment variables). Never commit literal secret values to documentation or repository files.
+
 
 ---
 

@@ -18,6 +18,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { ApiError } from "@/api/errors";
 import { cn } from "@/lib/utils";
+import { formatTableTimestamp } from "@/lib/dateTime";
 import {
   AlertCircle,
   AlertTriangle,
@@ -203,16 +204,7 @@ export function AdminUsersContent() {
   };
 
   const formatTimestamp = (dateStr?: string | null): string => {
-    if (!dateStr) return "-";
-    try {
-      const date = new Date(dateStr);
-      return date.toLocaleString(undefined, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      });
-    } catch {
-      return dateStr;
-    }
+    return formatTableTimestamp(dateStr);
   };
 
   const isSelf = (targetUser: AdminUser): boolean => {

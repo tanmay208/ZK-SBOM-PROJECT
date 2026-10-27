@@ -176,6 +176,30 @@ export interface PolicyCreateRequest {
 // PROOF
 export type ProofJobStatus = "pending" | "assembling_witness" | "running" | "completed" | "failed" | "execution_blocked";
 
+export interface SegmentProofResponse {
+  id: string;
+  chunk_id: string;
+  chunk_index: number;
+  total_chunks: number;
+  segment_index: number;
+  status: string;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface ChunkProofSetResponse {
+  id: string;
+  proof_job_id: string;
+  chunk_index: number;
+  total_chunks: number;
+  component_start: number;
+  component_count: number;
+  components_commit: string | null;
+  status: string;
+  created_at: string;
+  segments?: SegmentProofResponse[];
+}
+
 export interface ProofJobResponse {
   id: string;
   sbom_upload_id: string;
@@ -186,9 +210,11 @@ export interface ProofJobResponse {
   vulnerability_db_root: string | null;
   policy_hash: string | null;
   proof_artifact: string | null;
+  proof_archive_hash?: string | null;
   error_message: string | null;
   created_at: string;
   completed_at: string | null;
+  chunks?: ChunkProofSetResponse[];
 }
 
 // VERIFICATION

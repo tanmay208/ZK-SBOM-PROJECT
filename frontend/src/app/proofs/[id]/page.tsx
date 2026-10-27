@@ -15,17 +15,23 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { ApiError } from "@/api/errors";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { formatToIST } from "@/lib/dateTime";
+import { calculateProofEta } from "@/lib/etaCalculator";
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowRight,
   Calendar,
   Check,
   CheckCircle2,
+  Clock,
   Copy,
+  Cpu,
   Loader2,
   RotateCw,
   ServerOff,
   ShieldCheck,
+  Timer,
   XCircle
 } from "lucide-react";
 
@@ -118,6 +124,7 @@ function ProofDetail({ id }: { id: string }) {
 
   const isTerminal = job.status === "completed" || job.status === "failed" || job.status === "execution_blocked";
   const isRunning = job.status === "pending" || job.status === "assembling_witness" || job.status === "running";
+  const eta = calculateProofEta(job);
 
   return (
     <div className="space-y-6">
@@ -196,6 +203,90 @@ function ProofDetail({ id }: { id: string }) {
             )}
           </div>
         </CardHeader>
+
+        {/* Live Prover Telemetry, Segment Progress & Truthful ETA */}
+        {job.chunks && job.chunks.length > 0 && (
+          <div className="bg-muted/20 border-b border-border/60 p-4 space-y-3">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
+              <span className="font-semibold text-foreground flex items-center gap-1.5">
+                <Cpu className="size-3.5 text-primary" />
+                Proof Generation Progress: {eta.completedSegments} of {eta.totalSegments} segments ({eta.progressPercent}%)
+              </span>
+              <span className="text-muted-foreground font-mono text-[11px]">
+                {eta.completedChunks} of {eta.totalChunks} chunks completed
+              </span>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="w-full bg-secondary rounded-full h-2 overflow-hidden">
+              <div
+                className={cn(
+                  "h-2 rounded-full transition-all duration-500 ease-out",
+                  eta.isStale ? "bg-amber-500" : "bg-primary"
+                )}
+                style={{ width: `${eta.progressPercent}%` }}
+              />
+            </div>
+
+            {/* Stale Worker Warning Banner */}
+            {eta.isStale && (
+              <div className="rounded-md bg-amber-500/10 border border-amber-500/30 p-2.5 text-xs text-amber-800 dark:text-amber-300 flex items-start gap-2">
+                <AlertTriangle className="size-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                <div>
+                  <p className="font-medium">Stale Progress Detected</p>
+                  <p className="text-[11px] opacity-90">{eta.staleWarning}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Dynamic ETA & Prover Pace Telemetry */}
+            {isRunning && !eta.isStale && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-[11px]">
+                <div className="rounded border border-border/40 bg-background/50 px-2.5 py-1.5 flex items-center gap-2">
+                  <Timer className="size-3.5 text-primary shrink-0" />
+                  <div>
+                    <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Remaining</span>
+                    <span className="font-medium text-foreground">{eta.formattedRemainingTime}</span>
+                  </div>
+                </div>
+
+                <div className="rounded border border-border/40 bg-background/50 px-2.5 py-1.5 flex items-center gap-2">
+                  <Clock className="size-3.5 text-primary shrink-0" />
+                  <div>
+                    <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Est. Completion</span>
+                    <span className="font-medium text-foreground">{eta.formattedEstCompletionIST || "Calibrating..."}</span>
+                  </div>
+                </div>
+
+                <div className="rounded border border-border/40 bg-background/50 px-2.5 py-1.5 flex items-center gap-2">
+                  <Cpu className="size-3.5 text-primary shrink-0" />
+                  <div>
+                    <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Prover Pace</span>
+                    <span className="font-medium text-foreground font-mono">
+                      {eta.rollingAvgSeconds ? `${eta.rollingAvgSeconds}s / seg` : "Gathering samples..."}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {isRunning && eta.activeChunkIndex !== null && (
+              <p className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                <Loader2 className="size-3 animate-spin text-primary" />
+                <span>
+                  Currently proving <strong>Chunk {eta.activeChunkIndex}</strong> of 32
+                </span>
+              </p>
+            )}
+
+            {job.status === "completed" && (
+              <p className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 font-medium">
+                <CheckCircle2 className="size-3" />
+                <span>All 256 segment proofs cryptographically verified and packaged in archive</span>
+              </p>
+            )}
+          </div>
+        )}
 
         <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-5 text-xs">
           {/* Job ID */}
@@ -303,16 +394,22 @@ function ProofDetail({ id }: { id: string }) {
           {/* Timestamps */}
           <div className="rounded-lg bg-muted/40 p-3 border border-border/40 space-y-1">
             <span className="font-semibold text-muted-foreground uppercase text-[10px] tracking-wider">
-              Execution Timeline
+              Execution Timeline (IST)
             </span>
             <div className="flex items-center gap-1.5 text-muted-foreground pt-1">
               <Calendar className="size-3 text-muted-foreground" />
-              <span>Created: {new Date(job.created_at).toLocaleString()}</span>
+              <span>Created: {formatToIST(job.created_at, { includeSeconds: true })}</span>
             </div>
             {job.completed_at && (
               <div className="flex items-center gap-1.5 text-muted-foreground">
                 <Check className="size-3 text-emerald-500" />
-                <span>Completed: {new Date(job.completed_at).toLocaleString()}</span>
+                <span>Completed: {formatToIST(job.completed_at, { includeSeconds: true })}</span>
+              </div>
+            )}
+            {isRunning && eta.formattedEstCompletionIST && (
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <Clock className="size-3 text-blue-500" />
+                <span>Est. Completion: {eta.formattedEstCompletionIST}</span>
               </div>
             )}
           </div>

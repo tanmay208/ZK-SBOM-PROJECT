@@ -17,6 +17,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ApiError } from "@/api/errors";
 import { cn } from "@/lib/utils";
+import { formatTableTimestamp } from "@/lib/dateTime";
 import Link from "next/link";
 import {
   AlertCircle,
@@ -350,13 +351,7 @@ function CertificateList() {
 
                         {/* Issued Timestamp */}
                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                          {new Date(cert.issued_at).toLocaleString(undefined, {
-                            year: "numeric",
-                            month: "short",
-                            day: "numeric",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
+                          {formatTableTimestamp(cert.issued_at)}
                         </TableCell>
 
                         {/* Action Link */}

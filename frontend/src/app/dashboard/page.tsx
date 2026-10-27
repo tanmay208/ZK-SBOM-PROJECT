@@ -320,7 +320,7 @@ function Dashboard() {
               </div>
               <h3 className="font-semibold text-sm text-foreground">Verify Proof Artifact</h3>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Validate public-input commitments ($R_{"{SBOM}"}, R_{"{VulnDB}"}, H_{"{Policy}"}$) against recorded UltraPlonk proof packages.
+                Validate public-input commitments (R_SBOM, R_VulnDB, H_Policy) against recorded UltraPlonk proof packages.
               </p>
             </div>
             <div className="mt-4 flex items-center gap-1 text-xs font-medium text-primary group-hover:translate-x-0.5 transition-transform">
@@ -360,7 +360,7 @@ function Dashboard() {
               </div>
               <h3 className="font-semibold text-sm text-foreground">Security Policies</h3>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Inspect deterministic rule sets, CVSS severity thresholds, and canonical SHA-256 policy digest bindings ($H_{"{Policy}"}$).
+                Inspect deterministic rule sets, CVSS severity thresholds, and canonical SHA-256 policy digest bindings (H_Policy).
               </p>
             </div>
             <div className="mt-4 flex items-center gap-1 text-xs font-medium text-primary group-hover:translate-x-0.5 transition-transform">
@@ -380,7 +380,7 @@ function Dashboard() {
               </div>
               <h3 className="font-semibold text-sm text-foreground">Vulnerability Intelligence</h3>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Explore frozen CVE snapshot databases ($R_{"{VulnDB}"}$) with four-state lifecycle provenance tracking.
+                Explore frozen CVE snapshot databases (R_VulnDB) with four-state lifecycle provenance tracking.
               </p>
             </div>
             <div className="mt-4 flex items-center gap-1 text-xs font-medium text-primary group-hover:translate-x-0.5 transition-transform">
@@ -443,7 +443,7 @@ function Dashboard() {
             </div>
             <div className="flex items-center justify-between pb-1.5 border-b border-border/70">
               <span className="text-muted-foreground">Commitment Scheme</span>
-              <span className="font-mono text-[11px] text-foreground">Poseidon Sponge ($t=2, t=3$)</span>
+              <span className="font-mono text-[11px] text-foreground">Poseidon Sponge (t=2, t=3)</span>
             </div>
             <div className="flex items-center justify-between pt-0.5">
               <span className="text-muted-foreground">Witness Privacy</span>

@@ -72,7 +72,7 @@ export function AdminOverviewContent() {
               </div>
               <CardTitle className="text-base font-semibold mt-3">Security Policies</CardTitle>
               <CardDescription className="text-xs leading-relaxed">
-                Define organizational CVSS score thresholds, deploy active policies, and inspect canonical policy digest commitments ($H_{"{Policy}"}$).
+                Define organizational CVSS score thresholds, deploy active policies, and inspect canonical policy digest commitments (H_Policy).
               </CardDescription>
             </CardHeader>
             <CardContent className="text-xs text-muted-foreground space-y-2">
@@ -107,7 +107,7 @@ export function AdminOverviewContent() {
               </div>
               <CardTitle className="text-base font-semibold mt-3">Vulnerability Intelligence</CardTitle>
               <CardDescription className="text-xs leading-relaxed">
-                Oversee snapshot lifecycle (<code className="text-foreground">pending</code> &rarr; <code className="text-foreground">approved</code> &rarr; <code className="text-foreground">frozen</code> &rarr; <code className="text-foreground">revoked</code>) and compute authoritative SMT roots ($R_{"{VulnDB}"}$).
+                Oversee snapshot lifecycle (<code className="text-foreground">pending</code> &rarr; <code className="text-foreground">approved</code> &rarr; <code className="text-foreground">frozen</code> &rarr; <code className="text-foreground">revoked</code>) and compute authoritative SMT roots (R_VulnDB).
               </CardDescription>
             </CardHeader>
             <CardContent className="text-xs text-muted-foreground space-y-2">
@@ -184,7 +184,7 @@ export function AdminOverviewContent() {
               <strong>Zero Vendor Manifest Disclosure:</strong> Administrative roles do not bypass tenant isolation. Vendor SBOM components, package URLs (PURLs), licenses, and internal dependency graphs are private to the owning tenant.
             </p>
             <p>
-              <strong>Cryptographic Verification Only:</strong> Administrators inspect only public commitments ($R_{"{SBOM}"}$, $R_{"{VulnDB}"}$, $H_{"{Policy}"}$) and issued verification certificates. Raw SBOM contents are never stored in administrative logs or exposed in admin views.
+              <strong>Cryptographic Verification Only:</strong> Administrators inspect only public commitments (R_SBOM, R_VulnDB, H_Policy) and issued verification certificates. Raw SBOM contents are never stored in administrative logs or exposed in admin views.
             </p>
           </CardContent>
         </Card>

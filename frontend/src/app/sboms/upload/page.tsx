@@ -873,7 +873,7 @@ function SbomUploadForm() {
               </div>
               <div className="flex justify-between border-b border-border/40 pb-1">
                 <span>Tree Construction</span>
-                <span className="font-medium text-foreground">Poseidon SMT ($t=3$)</span>
+                <span className="font-medium text-foreground">Poseidon SMT (t=3)</span>
               </div>
               <div className="flex justify-between pt-0.5">
                 <span>Proof Generation</span>
