@@ -39,14 +39,13 @@ export const PRIMARY_ASSIGNABLE_ROLES: Role[] = [
   "admin",
 ];
 
-export const LEGACY_ROLES: Role[] = [
+export const LEGACY_ROLES: string[] = [
   "auditor",
   "trusted_importer",
 ];
 
 export const APPROVED_ROLES: Role[] = [
   ...PRIMARY_ASSIGNABLE_ROLES,
-  ...LEGACY_ROLES,
 ];
 
 interface PendingAction {
@@ -405,7 +404,7 @@ export function AdminUsersContent() {
                       </option>
                     ))}
                   </optgroup>
-                  <optgroup label="Legacy Roles">
+                  <optgroup label="Legacy Roles (Pending Remediation)">
                     {LEGACY_ROLES.map((r) => (
                       <option key={r} value={r}>
                         {r}

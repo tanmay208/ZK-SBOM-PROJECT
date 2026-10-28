@@ -38,9 +38,6 @@ function getRoleBadgeVariant(role: string): "default" | "info" | "warning" | "se
       return "info";
     case "buyer":
       return "info";
-    case "trusted_importer":
-      return "warning";
-    case "auditor":
     default:
       return "secondary";
   }
@@ -80,22 +77,8 @@ function getRoleDetails(role: string) {
           "Cannot access or verify proofs of other tenant accounts",
         ],
       };
-    case "trusted_importer":
-      return {
-        label: "Trusted Threat Intelligence Importer",
-        summary: "Restricted feeder role: authoritative ingestion of CVE intelligence records with provenance verification.",
-        permissions: [
-          "Ingest vulnerability databases from trusted sources (NVD, OSV, GitHub Advisory) (/admin/vulnerabilities)",
-          "Attach cryptographic provenance metadata to ingested feeds",
-          "Inspect existing snapshot lifecycle states",
-        ],
-        restrictions: [
-          "Cannot approve or freeze vulnerability snapshots (Separation of Duties; Admin only)",
-          "Cannot upload SBOM manifests or initiate ZKP proving jobs",
-          "Excluded from general tenant dashboard and verification workspace",
-        ],
-      };
     case "buyer":
+    default:
       return {
         label: "Procurement Buyer",
         summary: "Supply chain consumer: independent verification of vendor cryptographic evidence, public commitments (R_SBOM, R_VulnDB, H_Policy), and compliance certificates.",
@@ -109,22 +92,6 @@ function getRoleDetails(role: string) {
         restrictions: [
           "Cannot upload private SBOM manifests or compile proof jobs (Vendor/Admin only)",
           "Cannot modify security policies or approve vulnerability snapshots (Admin only)",
-          "Cannot edit or revoke certificates",
-        ],
-      };
-    case "auditor":
-    default:
-      return {
-        label: "Compliance Auditor",
-        summary: "Independent verifier: read-only inspection of cryptographic evidence, public commitment verification, and certificate attestation.",
-        permissions: [
-          "Independently verify zero-knowledge proofs against public commitments (/verify)",
-          "Inspect issued verification certificates and validate public records (/certificates)",
-          "Review active security policies and frozen vulnerability snapshot commitments",
-        ],
-        restrictions: [
-          "Cannot upload private SBOM manifests or compile proof jobs",
-          "Cannot modify security policies or approve vulnerability snapshots",
           "Cannot edit or revoke certificates",
         ],
       };
@@ -199,7 +166,7 @@ export function ProfileContent() {
     }
   };
 
-  const roleInfo = getRoleDetails(user?.role || "auditor");
+  const roleInfo = getRoleDetails(user?.role || "buyer");
 
   return (
     <div className="space-y-6">
@@ -232,7 +199,7 @@ export function ProfileContent() {
                     </CardDescription>
                   </div>
                 </div>
-                <Badge variant={getRoleBadgeVariant(user?.role || "auditor")} className="capitalize text-xs">
+                <Badge variant={getRoleBadgeVariant(user?.role || "buyer")} className="capitalize text-xs">
                   {user?.role?.replace(/_/g, " ")}
                 </Badge>
               </div>
@@ -380,7 +347,7 @@ export function ProfileContent() {
             </CardContent>
           </Card>
 
-          {/* System-Wide 5-Role Model Reference Table */}
+          {/* System-Wide 3-Role Model Reference Table */}
           <Card className="shadow-xs">
             <CardHeader className="border-b border-border/60 pb-3">
               <div className="flex items-center gap-2">
@@ -388,7 +355,7 @@ export function ProfileContent() {
                 <CardTitle className="text-sm font-semibold">Platform Role Architecture Reference</CardTitle>
               </div>
               <CardDescription className="text-xs">
-                Planned 5-role security model mapped against active and planned backend capabilities.
+                Consolidated 3-role security model mapped against active backend capabilities.
               </CardDescription>
             </CardHeader>
             <CardContent className="p-0">
@@ -418,24 +385,6 @@ export function ProfileContent() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-muted-foreground">Maintains security policies, approves/freezes vulnerability snapshots, oversees proofs.</TableCell>
-                  </TableRow>
-                  <TableRow className={user?.role === "auditor" ? "bg-primary/5 font-medium" : ""}>
-                    <TableCell className="font-mono">auditor</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-[10px] text-emerald-700 dark:text-emerald-400 border-emerald-500/30">
-                        Active
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">Compliance audit role; independently verifies proofs and inspects public certificates.</TableCell>
-                  </TableRow>
-                  <TableRow className={user?.role === "trusted_importer" ? "bg-primary/5 font-medium" : ""}>
-                    <TableCell className="font-mono">trusted_importer</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-[10px] text-emerald-700 dark:text-emerald-400 border-emerald-500/30">
-                        Active (SoD)
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">Ingests NVD/OSV/GitHub threat intelligence with provenance; separated from snapshot approval.</TableCell>
                   </TableRow>
                   <TableRow className={user?.role === "buyer" ? "bg-primary/5 font-medium" : ""}>
                     <TableCell className="font-mono">buyer</TableCell>
@@ -592,7 +541,7 @@ export function ProfileContent() {
 
 export default function ProfilePage() {
   return (
-    <RouteGuard allowedRoles={["vendor", "admin", "auditor", "trusted_importer", "buyer"]}>
+    <RouteGuard allowedRoles={["vendor", "admin", "buyer"]}>
       <ProfileContent />
     </RouteGuard>
   );

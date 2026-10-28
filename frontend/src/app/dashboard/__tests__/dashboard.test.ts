@@ -87,11 +87,11 @@ test("Dashboard - Role-Aware Workflow Scoping", () => {
   assert.ok(vendorWorkflows.includes("/sboms/upload"), "Vendor must have upload workflow");
   assert.ok(vendorWorkflows.includes("/proofs/generate"), "Vendor must have proof generation workflow");
 
-  const auditorWorkflows = getAvailableWorkflows("auditor");
-  assert.ok(!auditorWorkflows.includes("/sboms/upload"), "Auditor MUST NOT have upload workflow");
-  assert.ok(!auditorWorkflows.includes("/proofs/generate"), "Auditor MUST NOT have proof generation workflow");
-  assert.ok(auditorWorkflows.includes("/verify"), "Auditor must have verify workflow");
-  assert.ok(auditorWorkflows.includes("/certificates"), "Auditor must have certificates workflow");
+  const buyerWorkflows = getAvailableWorkflows("buyer");
+  assert.ok(!buyerWorkflows.includes("/sboms/upload"), "Buyer MUST NOT have upload workflow");
+  assert.ok(!buyerWorkflows.includes("/proofs/generate"), "Buyer MUST NOT have proof generation workflow");
+  assert.ok(buyerWorkflows.includes("/verify"), "Buyer must have verify workflow");
+  assert.ok(buyerWorkflows.includes("/certificates"), "Buyer must have certificates workflow");
 });
 
 test("Dashboard - Zero-State Detection Logic", () => {
@@ -126,5 +126,5 @@ test("Dashboard - Source File Structure and Route Integrity", () => {
   assert.match(content, /href="\/admin\/vulnerabilities"/, "Must link to /admin/vulnerabilities");
 
   // Strict role guard protection
-  assert.match(content, /<RouteGuard allowedRoles=\{\["vendor", "admin", "auditor", "buyer"\]\}>/, "Dashboard must be guarded for vendor, admin, auditor, and buyer");
+  assert.match(content, /<RouteGuard allowedRoles=\{\["vendor", "admin", "buyer"\]\}>/, "Dashboard must be guarded for vendor, admin, and buyer");
 });

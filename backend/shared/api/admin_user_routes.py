@@ -72,7 +72,7 @@ class AdminUserResponse(BaseModel):
 
 
 class UserRoleUpdateRequest(BaseModel):
-    role: str = Field(..., description="Target role from the approved five-role model")
+    role: str = Field(..., description="Target role from the approved three-role model (vendor, buyer, admin)")
 
 
 class UserStatusUpdateRequest(BaseModel):

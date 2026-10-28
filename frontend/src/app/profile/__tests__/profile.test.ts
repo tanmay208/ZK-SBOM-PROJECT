@@ -10,14 +10,16 @@ test("Profile - Navigation and Role Availability", () => {
   assert.strictEqual(profileNav.exactMatch, true, "Profile must use exact route matching");
   assert.strictEqual(profileNav.section, "Workspace", "Profile belongs to Workspace section");
 
-  // All 5 active system roles can access their profile
-  const requiredRoles: Role[] = ["vendor", "admin", "auditor", "trusted_importer", "buyer"];
+  // All 3 active system roles can access their profile
+  const requiredRoles: Role[] = ["vendor", "admin", "buyer"];
   for (const role of requiredRoles) {
     assert.ok(
       profileNav.allowedRoles.includes(role),
       `Role ${role} must have access to Profile & Settings`
     );
   }
+  assert.ok(!(profileNav.allowedRoles as string[]).includes("auditor"), "auditor is retired");
+  assert.ok(!(profileNav.allowedRoles as string[]).includes("trusted_importer"), "trusted_importer is retired");
 });
 
 test("Profile - API Contract and Service Export", () => {
@@ -52,14 +54,12 @@ test("Profile - Mutation Operations and Stage D2 Roadmap Boundary", () => {
 });
 
 test("Profile - Role Summary Mapping", () => {
-  const activeRoles = ["vendor", "admin", "auditor", "trusted_importer", "buyer"];
+  const activeRoles = ["vendor", "admin", "buyer"];
   
   // Ensure each role has a well-defined privilege scope
   const rolePrivilegeMap: Record<string, { canIngest: boolean; canApproveSnapshots: boolean; canManageSBOMs: boolean; canVerify: boolean }> = {
     vendor: { canIngest: false, canApproveSnapshots: false, canManageSBOMs: true, canVerify: true },
-    admin: { canIngest: false, canApproveSnapshots: true, canManageSBOMs: true, canVerify: true },
-    auditor: { canIngest: false, canApproveSnapshots: false, canManageSBOMs: false, canVerify: true },
-    trusted_importer: { canIngest: true, canApproveSnapshots: false, canManageSBOMs: false, canVerify: false },
+    admin: { canIngest: true, canApproveSnapshots: true, canManageSBOMs: true, canVerify: true },
     buyer: { canIngest: false, canApproveSnapshots: false, canManageSBOMs: false, canVerify: true },
   };
 
@@ -67,11 +67,11 @@ test("Profile - Role Summary Mapping", () => {
     assert.ok(rolePrivilegeMap[role] !== undefined, `Role ${role} must have defined privilege boundaries`);
   }
 
-  // Separation of duties check
-  assert.strictEqual(rolePrivilegeMap.trusted_importer.canIngest, true);
-  assert.strictEqual(rolePrivilegeMap.trusted_importer.canApproveSnapshots, false);
-  assert.strictEqual(rolePrivilegeMap.admin.canIngest, false);
+  // Two-Person integrity and role boundaries check
+  assert.strictEqual(rolePrivilegeMap.admin.canIngest, true);
   assert.strictEqual(rolePrivilegeMap.admin.canApproveSnapshots, true);
   assert.strictEqual(rolePrivilegeMap.buyer.canManageSBOMs, false);
   assert.strictEqual(rolePrivilegeMap.buyer.canVerify, true);
+  assert.strictEqual(rolePrivilegeMap.vendor.canManageSBOMs, true);
+  assert.strictEqual(rolePrivilegeMap.vendor.canIngest, false);
 });

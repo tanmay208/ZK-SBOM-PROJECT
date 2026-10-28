@@ -1,7 +1,7 @@
-// AUTH & ROLES (Roadmap V3 Stage G2: Consolidated 3-role primary model)
+// AUTH & ROLES (Roadmap V3: Consolidated 3-role primary model)
 export type PrimaryRole = "vendor" | "buyer" | "admin";
 export type LegacyRole = "auditor" | "trusted_importer";
-export type Role = PrimaryRole | LegacyRole;
+export type Role = "vendor" | "buyer" | "admin";
 
 export interface User {
   id: string;

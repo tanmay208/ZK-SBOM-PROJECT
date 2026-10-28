@@ -49,8 +49,12 @@ test("Registration and Login - Authenticated redirect lifecycle", () => {
   assert.strictEqual(redirectedTo, "/", "Authenticated user is redirected to home/dashboard via effect");
 });
 
-test("Role Model - trusted_importer is recognized and isolated", () => {
-  const allRoles = ["vendor", "admin", "auditor", "trusted_importer"];
-  assert.strictEqual(allRoles.length, 4, "Role system recognizes all 4 authoritative personas");
-  assert.ok(allRoles.includes("trusted_importer"), "trusted_importer is a valid system role");
+test("Role Model - Consolidated 3-role model recognizes and isolates vendor, buyer, and admin", () => {
+  const supportedRoles = ["vendor", "admin", "buyer"];
+  assert.strictEqual(supportedRoles.length, 3, "Role system recognizes exactly 3 authoritative personas");
+  assert.ok(supportedRoles.includes("vendor"), "vendor is a valid system role");
+  assert.ok(supportedRoles.includes("buyer"), "buyer is a valid system role");
+  assert.ok(supportedRoles.includes("admin"), "admin is a valid system role");
+  assert.ok(!supportedRoles.includes("trusted_importer"), "trusted_importer is decommissioned from active roles");
+  assert.ok(!supportedRoles.includes("auditor"), "auditor is decommissioned from active roles");
 });

@@ -11,8 +11,9 @@ test("Verification - Role Access", () => {
   const allowedRoles = verifyNav.allowedRoles;
   assert.ok(allowedRoles.includes("vendor"), "Vendor is allowed in verification workspace");
   assert.ok(allowedRoles.includes("admin"), "Admin is allowed in verification workspace");
-  assert.ok(allowedRoles.includes("auditor"), "Auditor is allowed in verification workspace");
-  assert.ok(!allowedRoles.includes("trusted_importer"), "Trusted importer is not allowed in verification workspace");
+  assert.ok(allowedRoles.includes("buyer"), "Buyer is allowed in verification workspace");
+  assert.ok(!(allowedRoles as string[]).includes("auditor"), "Auditor is retired from verification workspace");
+  assert.ok(!(allowedRoles as string[]).includes("trusted_importer"), "Trusted importer is not allowed in verification workspace");
 });
 
 test("Verification - Selection Constraint", () => {

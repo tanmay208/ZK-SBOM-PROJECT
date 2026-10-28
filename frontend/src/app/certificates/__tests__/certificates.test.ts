@@ -7,7 +7,7 @@ test("Certificate - Public Accessibility Constraint", () => {
   // Authenticated certificates listing is protected by allowed roles
   const certNav = NAVIGATION_CONFIG.find((item) => item.href === "/certificates");
   assert.ok(certNav, "Certificates listing item must exist in NAVIGATION_CONFIG");
-  assert.deepStrictEqual(certNav.allowedRoles, ["vendor", "admin", "auditor", "buyer"]);
+  assert.deepStrictEqual(certNav.allowedRoles, ["vendor", "admin", "buyer"]);
 
   // Public detail page /certificates/[id] is omitted from navigation to allow unauthenticated direct verification
   const publicDetailNav = NAVIGATION_CONFIG.find((item) => item.href.startsWith("/certificates/"));

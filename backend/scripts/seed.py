@@ -17,7 +17,7 @@ def seed():
     users_to_seed = [
         {"username": "admin", "role": "admin"},
         {"username": "vendor", "role": "vendor"},
-        {"username": "trusted_importer", "role": "trusted_importer"},
+        {"username": "buyer", "role": "buyer"},
     ]
     
     with SessionLocal() as db:

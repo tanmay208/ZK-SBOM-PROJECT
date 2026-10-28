@@ -31,21 +31,22 @@
    - Tokens must **never** be stored in `localStorage`, `sessionStorage`, or unencrypted cookies, preventing token theft via Cross-Site Scripting (XSS).
    - Token expiration is strictly bounded (`ACCESS_TOKEN_EXPIRE_MINUTES = 60`).
 4. **Base Role Allocation**:
-   - The self-registration route (`POST /api/v1/auth/register`) strictly assigns the base role `auditor` to all newly created users.
+   - The self-registration route (`POST /api/v1/auth/register`) strictly assigns the base role `buyer` to all newly created users.
    - Roles cannot be selected, submitted, or escalated through registration request payloads.
 
 ---
 
 ## 3. Role-Based Access Control (RBAC) & Separation of Duties
 
-The application enforces strict separation between four roles:
+The application enforces strict separation between three consolidated roles (`admin`, `vendor`, `buyer`):
 
 | Role | Permitted Actions | Prohibited Actions | Enforcement Mechanism |
 | :--- | :--- | :--- | :--- |
 | **`vendor`** | Register applications, upload private SBOMs, trigger ZKP proof generation jobs, download issued certificates. | Cannot ingest CVE vulnerability data, cannot approve/freeze vulnerability snapshots, cannot create policies. | `require_roles("vendor", "admin")` |
-| **`auditor`** | Submit public roots and proof artifacts for verification, inspect certificates, check real-time revocation status. | Cannot upload SBOMs, cannot view private vendor applications, cannot access unapproved vulnerability data. | Default registration role; restricted routes reject with 403 Forbidden. |
-| **`trusted_importer`** | Ingest CVE vulnerability feeds into `pending` snapshots. | Cannot approve or freeze vulnerability snapshots, cannot upload SBOMs. | `require_roles("trusted_importer")` (Two-person integrity) |
-| **`admin`** | Create security policies, approve and freeze vulnerability snapshots, revoke compromised certificates. | Cannot bypass tenant isolation on vendor applications. | `require_roles("admin")` |
+| **`buyer`** | Submit public roots and proof artifacts for independent verification, inspect issued certificates, validate tamper-evident records. | Cannot upload private SBOM manifests, cannot trigger ZKP proof jobs, cannot create policies or approve snapshots. | Default registration role; restricted routes reject with 403 Forbidden. |
+| **`admin`** | Create security policies, ingest vulnerability feeds (under Two-Person Integrity), approve and freeze vulnerability snapshots, manage platform users, and revoke compromised certificates. | Cannot self-approve own vulnerability snapshots (`creator != approver`); cannot demote last active admin. | `require_roles("admin")` |
+
+*Note: Legacy roles (`auditor` and `trusted_importer`) are retired from active assignment, registration, filters, and UI workflows. Historical database constraints and migrations 001–016 remain preserved.*
 
 ### Two-Person Integrity (Separation of Duties)
 - Ingesting vulnerability data creates snapshots in `pending` status.
@@ -71,7 +72,7 @@ The application enforces strict separation between four roles:
 1. **Private Data Classification**:
    - Raw CycloneDX SBOM JSON content, component names, package URLs (`purl`), versions, and dependency graphs are classified as **Private Vendor Data**.
 2. **Buyer-Facing Sanitization**:
-   - Route handlers and verification responses must **never** return raw content, PURLs, or component versions to buyers or public auditors (`SECURITY_BOUNDARY.md §1, §4`).
+   - Route handlers and verification responses must **never** return raw content, PURLs, or component versions to buyers or public verifiers (`SECURITY_BOUNDARY.md §1, §4`).
    - The public verification endpoint consumes only the 32-byte public Merkle roots, the policy hash, and the proof artifact.
 3. **Upload Request Body Limit**:
    - All upload endpoints enforce a strict **10 MB body size ceiling** via `RequestSizeLimitMiddleware` (`shared/app_factory.py`). Requests exceeding 10 MB are rejected immediately with HTTP 413 Payload Too Large.

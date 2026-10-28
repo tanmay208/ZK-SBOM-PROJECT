@@ -312,7 +312,7 @@ export default function RegisterPage() {
                         <span>Creating Account...</span>
                       </>
                     ) : (
-                      <span>Create Auditor Account</span>
+                      <span>Create Buyer Account</span>
                     )}
                   </Button>
                 </form>

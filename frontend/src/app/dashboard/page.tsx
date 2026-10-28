@@ -42,9 +42,6 @@ function getRoleBadgeVariant(role: string) {
       return "info";
     case "buyer":
       return "info";
-    case "trusted_importer":
-      return "warning";
-    case "auditor":
     default:
       return "secondary";
   }
@@ -56,13 +53,9 @@ function getRoleDescription(role: string): string {
       return "Full administrative authority: user management, security policy definition, and proof oversight.";
     case "vendor":
       return "Private SBOM repository management, Sparse Merkle Tree generation, and UltraPlonk proof compilation.";
-    case "trusted_importer":
-      return "Authoritative vulnerability intelligence ingestion and CVE snapshot lifecycle management.";
     case "buyer":
-      return "Procurement verifier: independent verification of software supply-chain cryptographic evidence, public commitments, and compliance certificates.";
-    case "auditor":
     default:
-      return "Read-only independent proof verification, public commitment validation, and certificate inspection.";
+      return "Procurement verifier: independent verification of software supply-chain cryptographic evidence, public commitments, and compliance certificates.";
   }
 }
 
@@ -74,7 +67,7 @@ function Dashboard() {
   });
 
   const isVendorOrAdmin = user?.role === "vendor" || user?.role === "admin";
-  const isVerifier = user?.role === "auditor" || user?.role === "buyer";
+  const isVerifier = user?.role === "buyer";
 
   const isZeroState =
     !isLoading &&
@@ -233,9 +226,7 @@ function Dashboard() {
           description={
             isVendorOrAdmin
               ? "Start by uploading a CycloneDX or SPDX JSON manifest to generate a private Sparse Merkle Tree commitment and compile UltraPlonk proofs."
-              : user?.role === "buyer"
-              ? "Your Buyer account is equipped to independently verify vendor proof jobs, inspect cryptographic commitments, and validate tamper-evident compliance certificates."
-              : "Your Auditor account is equipped to independently verify vendor proof jobs and inspect tamper-evident compliance certificates."
+              : "Your Buyer account is equipped to independently verify vendor proof jobs, inspect cryptographic commitments, and validate tamper-evident compliance certificates."
           }
           action={
             isVendorOrAdmin ? (
@@ -411,12 +402,12 @@ function Dashboard() {
             </div>
             <div className="flex items-center justify-between pb-2 border-b border-border/70">
               <span className="text-muted-foreground">Assigned Role</span>
-              <Badge variant={getRoleBadgeVariant(user?.role || "auditor")} className="capitalize text-[11px]">
+              <Badge variant={getRoleBadgeVariant(user?.role || "buyer")} className="capitalize text-[11px]">
                 {user?.role?.replace(/_/g, " ")}
               </Badge>
             </div>
             <p className="text-muted-foreground leading-relaxed pt-1">
-              {getRoleDescription(user?.role || "auditor")}
+              {getRoleDescription(user?.role || "buyer")}
             </p>
           </CardContent>
         </Card>
@@ -467,7 +458,7 @@ function Dashboard() {
 
 export default function DashboardPage() {
   return (
-    <RouteGuard allowedRoles={["vendor", "admin", "auditor", "buyer"]}>
+    <RouteGuard allowedRoles={["vendor", "admin", "buyer"]}>
       <Dashboard />
     </RouteGuard>
   );
