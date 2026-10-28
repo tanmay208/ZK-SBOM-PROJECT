@@ -402,12 +402,12 @@ function Dashboard() {
             </div>
             <div className="flex items-center justify-between pb-2 border-b border-border/70">
               <span className="text-muted-foreground">Assigned Role</span>
-              <Badge variant={getRoleBadgeVariant(user?.role || "auditor")} className="capitalize text-[11px]">
+              <Badge variant={getRoleBadgeVariant(user?.role || "buyer")} className="capitalize text-[11px]">
                 {user?.role?.replace(/_/g, " ")}
               </Badge>
             </div>
             <p className="text-muted-foreground leading-relaxed pt-1">
-              {getRoleDescription(user?.role || "auditor")}
+              {getRoleDescription(user?.role || "buyer")}
             </p>
           </CardContent>
         </Card>

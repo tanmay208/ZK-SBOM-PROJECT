@@ -305,6 +305,6 @@ function PublicCertificateDetail({ id }: { id: string }) {
 export default function PublicCertificatePage(props: { params: Promise<{ id: string }> }) {
   const params = use(props.params);
 
-  // NOTE: This route deliberately omits RouteGuard so external buyers and auditors can validate certificates without authentication.
+  // NOTE: This route deliberately omits RouteGuard so external buyers and verifiers can validate certificates without authentication.
   return <PublicCertificateDetail id={params.id} />;
 }

@@ -166,7 +166,7 @@ export function ProfileContent() {
     }
   };
 
-  const roleInfo = getRoleDetails(user?.role || "auditor");
+  const roleInfo = getRoleDetails(user?.role || "buyer");
 
   return (
     <div className="space-y-6">
@@ -199,7 +199,7 @@ export function ProfileContent() {
                     </CardDescription>
                   </div>
                 </div>
-                <Badge variant={getRoleBadgeVariant(user?.role || "auditor")} className="capitalize text-xs">
+                <Badge variant={getRoleBadgeVariant(user?.role || "buyer")} className="capitalize text-xs">
                   {user?.role?.replace(/_/g, " ")}
                 </Badge>
               </div>

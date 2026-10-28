@@ -533,7 +533,7 @@ export default function HomePage() {
                 <span>Vulnerability Intelligence Lifecycle</span>
               </div>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Ingestion delimited by the <code className="text-foreground font-mono">trusted_importer</code> role. Explicit four-state lifecycle (<code className="font-mono">pending</code> &rarr; <code className="font-mono">approved</code> &rarr; <code className="font-mono">frozen</code> &rarr; <code className="font-mono">revoked</code>) for auditability.
+                Ingestion delimited by administrator credentials under Two-Person Integrity. Explicit four-state lifecycle (<code className="font-mono">pending</code> &rarr; <code className="font-mono">approved</code> &rarr; <code className="font-mono">frozen</code> &rarr; <code className="font-mono">revoked</code>) for auditability.
               </p>
               <div className="mt-auto pt-2">
                 <Badge variant="secondary" className="text-[10px]">Separation of Duties</Badge>
