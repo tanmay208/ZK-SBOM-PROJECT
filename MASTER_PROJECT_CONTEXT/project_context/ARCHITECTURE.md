@@ -27,7 +27,7 @@ graph TB
     subgraph BackendLayer["Unified FastAPI Application (Port 8000)"]
         CoreRouter["FastAPI Application Factory<br/>Unified Router Mount"]
         
-        AuthSvc["Auth & User Management<br/>/api/v1/auth & /api/v1/admin/users<br/>Bcrypt / JWT / 5-Role RBAC"]
+        AuthSvc["Auth & User Management<br/>/api/v1/auth & /api/v1/admin/users<br/>Bcrypt / JWT / 3-Role RBAC"]
         SBOM["SBOM Intake & Application Service<br/>/api/v1/sbom & /api/v1/applications<br/>CycloneDX Parser / Binary Merkle Tree"]
         PolicySvc["Security Policy Service<br/>/api/v1/policy<br/>CVSS Thresholds / Poseidon Hash"]
         VulnSvc["Vulnerability Intelligence Service<br/>/api/v1/vulnerability<br/>2-Person Integrity / SMT Depth 256"]
@@ -78,17 +78,16 @@ graph TB
 - **Technology:** Next.js 16.3.5 (App Router), React 19.2.8, Tailwind CSS, TypeScript 5.
 - **Service Boundaries:** Communicates exclusively with the backend via `/api/v1/*` HTTP JSON and multipart endpoints.
 - **In-Memory Security:** JWT bearer tokens are strictly managed in runtime memory via `authTransport.ts` closures. Tokens are cleared on logout, 401 response, or window reload. No tokens or secrets are ever persisted to `localStorage`, `sessionStorage`, or browser cookies.
-- **Route Guarding:** Client-side role authorization is managed through `RouteGuard.tsx`, mapping the 5 approved roles to route access permissions.
+- **Route Guarding:** Client-side role authorization is managed through `RouteGuard.tsx`, mapping the 3 consolidated roles (`admin`, `vendor`, `buyer`) to route access permissions.
 - **Compiled Routes:** 19 total routes (17 statically prerendered, 2 server-rendered dynamic routes: `/certificates/[id]` and `/proofs/[id]`).
 
 ### 2.2 Shared Domain & Authentication Service (`backend/shared/`)
 - **Password Security:** Enforces Argon2id/Bcrypt password hashing with strict length validation (minimum 8 characters, maximum 72 bytes). Enforces constant-time dummy verification on invalid usernames to eliminate user enumeration side-channels.
-- **5-Role RBAC Model:** All new self-registered accounts are strictly assigned base role `buyer` (`auth_routes.py` line 97). Role escalations are restricted to administrators.
+- **Authoritative 3-Role RBAC Model:** All new self-registered accounts are strictly assigned base role `buyer` (`auth_routes.py` line 97). Role escalations are restricted to administrators.
   1. `vendor`: Manages registered applications and private SBOM uploads; initiates asynchronous ZKP proving jobs.
-  2. `buyer`: Inspects verification certificates, executes independent proof verification, and accesses public commitments.
-  3. `auditor`: Read-only access to verification records, public validations, and audit trails.
-  4. `admin`: Manages user roles and activation states, activates global security policies, approves/freezes/revokes vulnerability snapshots, and revokes certificates.
-  5. `trusted_importer`: Restricted vulnerability ingestion role separated from snapshot approval (enforcing two-person integrity).
+  2. `buyer`: Inspects verification certificates, executes independent proof verification, and accesses public commitments (default self-registration role).
+  3. `admin`: Manages user roles and activation states, activates global security policies, ingests vulnerability feeds under Two-Person Integrity, approves/freezes/revokes vulnerability snapshots, and revokes certificates.
+  *Note: Legacy roles (`auditor` and `trusted_importer`) are retired from active assignment, registration, filters, and UI workflows. Historical database constraints and migrations 001–016 remain preserved.*
 - **Concurrency & Admin Safety:** Role and status mutations are serialized using transaction-scoped PostgreSQL advisory locks (`pg_advisory_xact_lock` on key `6506399120658742601`). The system enforces strict last-admin protection, blocking the demotion or deactivation of the final active administrator.
 
 ### 2.3 SBOM & Application Management Service (`backend/sbom_service/`)
@@ -433,7 +432,7 @@ erDiagram
 | :--- | :--- | :--- | :--- | :--- |
 | `GET ""` | `admin` | Query: `skip`, `limit`, `role`, `is_active` | 200, 403, 422 | Lists registered users with pagination and filtering. |
 | `GET "/{user_id}"` | `admin` | Path: `user_id` (UUID) | 200, 403, 404 | Retrieves single user details. Non-disclosing 404 if absent. |
-| `PATCH "/{user_id}/role"` | `admin` | JSON: `role` (5-role model) | 200, 400, 403, 409, 422 | Updates user role. Serialized by PostgreSQL advisory lock. Rejects demotion of the last active administrator (400). |
+| `PATCH "/{user_id}/role"` | `admin` | JSON: `role` (3-role model: vendor, buyer, admin) | 200, 400, 403, 409, 422 | Updates user role. Serialized by PostgreSQL advisory lock. Rejects demotion of the last active administrator (400). |
 | `PATCH "/{user_id}/status"`| `admin` | JSON: `is_active` (bool) | 200, 400, 403, 404 | Updates account status. Blocks self-deactivation and deactivation of the last active administrator. |
 
 ### 6.3 Standalone Application API (`/api/v1/applications`)

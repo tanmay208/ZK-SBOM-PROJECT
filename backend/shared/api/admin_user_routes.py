@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api/v1/admin/users", tags=["admin_users"])
 
 PRIMARY_ROLES = ("vendor", "buyer", "admin")
 LEGACY_ROLES = ("auditor", "trusted_importer")
-ALLOWED_FILTER_ROLES = PRIMARY_ROLES
+ALLOWED_FILTER_ROLES = PRIMARY_ROLES + LEGACY_ROLES
 
 # Deterministic 64-bit integer for admin lifecycle synchronization across PostgreSQL sessions
 # Derived from ASCII 'ZKP_ADMI' -> 0x5A4B505F41444D49 -> 6506399120658742601
@@ -72,7 +72,7 @@ class AdminUserResponse(BaseModel):
 
 
 class UserRoleUpdateRequest(BaseModel):
-    role: str = Field(..., description="Target role from the approved five-role model")
+    role: str = Field(..., description="Target role from the approved three-role model (vendor, buyer, admin)")
 
 
 class UserStatusUpdateRequest(BaseModel):

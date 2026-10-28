@@ -45,7 +45,7 @@ def get_policy(
         'admin' role (SERVICE_CONTRACTS.md §3, SECURITY_RULES.md §3).
       - Policies are transparent/shared reference objects; they have no
         vendor/tenant ownership (no user_id column in database schema).
-      - Any authenticated user (vendor, auditor, admin) may inspect policies
+      - Any authenticated user (vendor, buyer, admin) may inspect policies
         to verify the compliance baseline used in ZKP proof generation.
       - Returns HTTP 404 if the policy does not exist.
       - Returns HTTP 401 if unauthenticated.

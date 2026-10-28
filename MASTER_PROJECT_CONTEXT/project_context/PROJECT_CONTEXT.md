@@ -71,7 +71,7 @@ The platform is designed with clear layer separation across the complete softwar
 
 ## 3. System Roles & Separation of Duties
 
-The application enforces strict Role-Based Access Control (RBAC) and Separation of Duties. The agreed product model comprises five roles:
+The application enforces strict Role-Based Access Control (RBAC) and Separation of Duties. The agreed product model comprises three consolidated roles (admin, vendor, buyer):
 
 1. **`vendor` (Software Supplier)**:
    - Registers applications within their isolated tenant namespace (`(name, vendor, user_id)` unique scope).
@@ -79,24 +79,16 @@ The application enforces strict Role-Based Access Control (RBAC) and Separation 
    - Initiates zero-knowledge proof generation jobs for their applications.
    - Downloads issued compliance certificates to present to buyers.
 2. **`buyer` (Enterprise / Regulated Buyer)**:
-   - Planned dedicated consumer role for purchasing organizations.
+   - Dedicated procurement verifier role for purchasing organizations (default self-registration role).
    - Receives verification evidence and independently verifies zk-SNARK proofs and certificates.
    - Validates proof commitments without accessing private component data or proprietary vendor architectures.
-3. **`auditor` (Third-Party Verifier)**:
-   - Default base role assigned to newly registered users via `/api/v1/auth/register`.
-   - Submits public roots (`sbom_root`, `vulnerability_db_root`, `policy_hash`) and proof artifacts for verification.
-   - Performs real-time certificate validation via public routes in a read-oriented workflow.
-   - Strictly forbidden from viewing private SBOM components or unapproved vulnerability feeds.
-4. **`admin` (Security Administrator)**:
+3. **`admin` (Security Administrator)**:
    - Defines authoritative security policies (e.g., maximum permissible CVSS score).
-   - Reviews and formally transitions vulnerability database snapshots (`approved` $\rightarrow$ `frozen`).
+   - Ingests vulnerability CVE definitions (under Two-Person Integrity) and formally transitions snapshots (`approved` $\rightarrow$ `frozen`).
    - Revokes compromised compliance certificates with auditable timestamps and reasons.
-   - Manages user accounts and privileged role assignments.
-5. **`trusted_importer` (Data Ingestor)**:
-   - Ingests vulnerability CVE definitions and generates Sparse Merkle Trees.
-   - Enforces two-person integrity: creates snapshots in `pending` status, requiring an `admin` to approve or freeze them.
+   - Manages user accounts, activation lifecycles, and privileged role assignments.
 
-*Implementation Evidence Note:* In the current codebase, `role` is stored as `String(50)` on `User` defaulting to `'auditor'`, with server-side checks actively enforcing `'vendor'`, `'admin'`, and `'trusted_importer'`. The dedicated `'buyer'` role and explicit account status/activation lifecycle are planned for Stage D (D2/D3).
+*Legacy Role Note:* Legacy roles (`auditor` and `trusted_importer`) are retired from active assignment, registration, filters, and UI workflows. Historical database migrations 001–016 and check constraints remain preserved. Existing legacy accounts can be discovered by administrators and transitioned to primary roles.
 
 ---
 
