@@ -21,8 +21,9 @@ test("Application Workspace - Navigation and Role Scoping", () => {
   // Allowed roles: vendor and admin
   assert.strictEqual(appNav.allowedRoles.includes("vendor"), true, "Vendors are permitted in Applications workspace");
   assert.strictEqual(appNav.allowedRoles.includes("admin"), true, "Admins are permitted in Applications workspace");
-  assert.strictEqual(appNav.allowedRoles.includes("auditor"), false, "Auditors are denied access to Applications workspace");
-  assert.strictEqual(appNav.allowedRoles.includes("trusted_importer"), false, "Trusted importers are denied access to Applications workspace");
+  assert.strictEqual((appNav.allowedRoles as string[]).includes("auditor"), false, "Auditors are denied access to Applications workspace");
+  assert.strictEqual((appNav.allowedRoles as string[]).includes("trusted_importer"), false, "Trusted importers are denied access to Applications workspace");
+  assert.strictEqual(appNav.allowedRoles.includes("buyer"), false, "Buyers are denied access to Applications workspace");
 
   // Route active matching
   assert.strictEqual(isRouteActive("/applications", "/applications", false), true);

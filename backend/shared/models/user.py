@@ -8,7 +8,7 @@ from shared.database import Base
 
 PRIMARY_ROLES = ("vendor", "buyer", "admin")
 LEGACY_ROLES = ("auditor", "trusted_importer")
-ALL_SUPPORTED_ROLES = PRIMARY_ROLES + LEGACY_ROLES
+ALL_SUPPORTED_ROLES = PRIMARY_ROLES
 
 
 class User(Base):

@@ -80,13 +80,11 @@ Stages A through F, Stage G (G0–G6), and the Follow-On Stage D Reassessment ar
 ## 3. Product & Architecture Invariants
 
 1. **Product Objective**: Privacy-preserving software supply-chain verification. A vendor manages SBOMs and generates cryptographic evidence; a buyer independently verifies proofs and public commitments ($R_{\text{SBOM}}$, $R_{\text{VulnDB}}$, $H_{\text{Policy}}$). A valid proof establishes compliance against the specific policy and vulnerability database—never claim it proves the application is free from all vulnerabilities.
-2. **Planned 5-Role Model**:
+2. **Authoritative 3-Role Authorization Model**:
    - `vendor`: Manages authorized applications and private SBOMs; initiates proof generation.
-   - `buyer`: Receives evidence and independently verifies proofs and authorized certificates.
-   - `auditor`: Accesses authorized verification evidence and audit information in a read-oriented workflow.
-   - `admin`: Manages authorized users, policies, vulnerability snapshots, and certificate lifecycle.
-   - `trusted_importer`: Restricted vulnerability-ingestion role enforcing separation of duties.
-   *Note: In current implementation, `role` is stored on `users` with default `auditor`, with `vendor`, `admin`, and `trusted_importer` checked in code. `buyer` and account status lifecycle are operational in Stage D/G.*
+   - `buyer`: Dedicated procurement verifier; receives evidence, independently verifies proofs, and inspects authorized certificates (default self-registration role).
+   - `admin`: Manages authorized users, policies, vulnerability snapshots, and certificate lifecycle; can ingest threat feeds under Two-Person Integrity rules.
+   *Note: Active application roles are strictly consolidated to `admin`, `vendor`, and `buyer`. Legacy roles (`auditor` and `trusted_importer`) are decommissioned from active assignment, registration, filters, and UI workflows. Historical migrations 001–016 are preserved intact without modification.*
 3. **Frontend Design Direction**: Professional, light-first product design inspired by modern SBOM-management information architecture (cool-grey/white surfaces, slate typography, restrained blue/teal accents; optional restrained dark theme). Displays genuine backend metrics—never invent placeholder stats or verification outcomes.
 4. **Cryptographic Foundation Frozen**: Noir 0.32.0 ACIR circuits, Barretenberg 0.46.1 verifier contracts, UltraPlonk proof formats (2144 bytes), Poseidon sponge parameters ($t=2, t=3$), and public input bindings are frozen for this roadmap. No modifications without prior authorization.
 5. **Authentication & In-Memory Privacy**: Bearer tokens are held strictly in memory (`authTransport.ts`) and cleared on logout or page refresh. Reauthentication is the intentional trade-off for zero persistent browser storage leaks. Use standard browser autocomplete semantics without claiming control over browser password managers.

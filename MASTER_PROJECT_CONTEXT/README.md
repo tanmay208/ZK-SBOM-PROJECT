@@ -154,4 +154,4 @@ When starting a session in this repository:
    - **Isolated Regression Test Database**: Docker PostgreSQL 17 on `127.0.0.1:5435` (`zkp_sbom_g2_integration`, Alembic rev `016`). Dedicated target for automated test suites and regression runs.
    - **PostgreSQL 16**: Excluded from Stage G and presentation workflows.
    - Never print or commit secrets, `.env` values, or bearer tokens.
-4. **Immediate Priority:** The immediate priority is the **Live UI Walkthrough** across the 4 implemented roles (`admin`, `trusted_importer`, `vendor`, `auditor`/`buyer`), NOT further cleanup or code refactoring.
+4. **Immediate Priority:** The immediate priority is the **Live UI Walkthrough** across the 3 consolidated roles (`admin`, `vendor`, `buyer`), NOT further cleanup or code refactoring.

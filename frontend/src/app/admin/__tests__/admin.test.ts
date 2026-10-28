@@ -5,18 +5,20 @@ import { policyService } from "@/api/services/policyService";
 import { vulnerabilityService } from "@/api/services/vulnerabilityService";
 
 test("Admin Intelligence - Role Scoping Constraints", () => {
-  const allowedRoles = ["vendor", "admin", "auditor", "trusted_importer"];
-  const ingestionAllowedFor = ["trusted_importer"];
+  const allowedRoles = ["vendor", "admin", "buyer"];
+  const ingestionAllowedFor = ["admin"];
   const lifecycleAllowedFor = ["admin"];
 
-  assert.ok(allowedRoles.includes("trusted_importer"), "trusted_importer can access Vulnerability Intel");
   assert.ok(allowedRoles.includes("admin"), "Admin can access Vulnerability Intel");
   assert.ok(allowedRoles.includes("vendor"), "Vendor can view state");
-  assert.ok(allowedRoles.includes("auditor"), "Auditor can view state");
+  assert.ok(allowedRoles.includes("buyer"), "Buyer can view state");
+  assert.ok(!(allowedRoles as string[]).includes("auditor"), "auditor is retired");
+  assert.ok(!(allowedRoles as string[]).includes("trusted_importer"), "trusted_importer is retired");
   
-  assert.ok(!ingestionAllowedFor.includes("admin"), "Admin cannot perform ingestion (SoD enforced)");
+  assert.ok(ingestionAllowedFor.includes("admin"), "Admin performs ingestion (Two-Person Integrity enforced)");
   assert.ok(!ingestionAllowedFor.includes("vendor"), "Vendor cannot perform ingestion");
-  assert.ok(!lifecycleAllowedFor.includes("trusted_importer"), "trusted_importer cannot approve or freeze snapshots");
+  assert.ok(!ingestionAllowedFor.includes("buyer"), "Buyer cannot perform ingestion");
+  assert.ok(!lifecycleAllowedFor.includes("buyer"), "Buyer cannot approve or freeze snapshots");
 });
 
 test("Admin Intelligence - Ingestion Schema and Trusted Sources", () => {

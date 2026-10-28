@@ -202,7 +202,7 @@ export function AdminOverviewContent() {
           </CardHeader>
           <CardContent className="space-y-3 pt-4 text-xs text-muted-foreground leading-relaxed">
             <p>
-              <strong>Ingestion vs. Approval Segregation:</strong> Administrators cannot ingest vulnerability feeds directly (<code className="font-mono text-foreground">trusted_importer</code> required). Trusted importers cannot approve or freeze snapshots.
+              <strong>Two-Person Integrity Rule:</strong> Administrators ingest vulnerability threat intelligence feeds directly. Snapshots must be reviewed and approved by a distinct Administrator before freezing.
             </p>
             <p>
               <strong>No Self-Approval:</strong> The vulnerability service rejects approval attempts if the snapshot creator matches the approving administrator ID (<code className="font-mono text-foreground">creator != approver</code>).

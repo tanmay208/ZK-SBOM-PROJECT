@@ -7,16 +7,16 @@ test("Navigation Configuration roles are strictly enforced", () => {
   assert.ok(sbomNav, "SBOM nav item must exist");
   assert.ok(sbomNav.allowedRoles.includes("vendor"), "Vendor can see SBOMs");
   assert.ok(sbomNav.allowedRoles.includes("admin"), "Admin can see SBOMs");
-  assert.ok(!sbomNav.allowedRoles.includes("auditor"), "Auditor CANNOT see SBOMs");
+  assert.ok(!(sbomNav.allowedRoles as string[]).includes("auditor"), "Auditor CANNOT see SBOMs");
   assert.ok(!sbomNav.allowedRoles.includes("buyer"), "Buyer CANNOT see SBOMs");
 
   const vulnerabilitiesNav = NAVIGATION_CONFIG.find((n) => n.href === "/admin/vulnerabilities");
   assert.ok(vulnerabilitiesNav, "Vulnerability Intel must target an implemented page");
-  assert.ok(vulnerabilitiesNav.allowedRoles.includes("trusted_importer"), "trusted_importer can see Vulnerability Intel");
+  assert.ok(!(vulnerabilitiesNav.allowedRoles as string[]).includes("trusted_importer"), "trusted_importer is removed from Vulnerability Intel");
   assert.ok(vulnerabilitiesNav.allowedRoles.includes("admin"), "admin can see Vulnerability Intel");
   assert.ok(vulnerabilitiesNav.allowedRoles.includes("vendor"), "vendor can see Vulnerability Intel");
   assert.ok(vulnerabilitiesNav.allowedRoles.includes("buyer"), "buyer can see Vulnerability Intel");
-  assert.ok(!sbomNav.allowedRoles.includes("trusted_importer"), "trusted_importer CANNOT see SBOMs");
+  assert.ok(!(sbomNav.allowedRoles as string[]).includes("trusted_importer"), "trusted_importer CANNOT see SBOMs");
 
   const policiesNav = NAVIGATION_CONFIG.find((n) => n.href === "/admin/policies");
   assert.ok(policiesNav, "Security Policies must target an implemented page");
@@ -28,15 +28,16 @@ test("Navigation Configuration roles are strictly enforced", () => {
 
   const verifyNav = NAVIGATION_CONFIG.find((n) => n.href === "/verify");
   assert.ok(verifyNav, "Proof Verification nav item must exist");
-  assert.ok(verifyNav.allowedRoles.includes("auditor"), "Auditor can see Proof Verification");
+  assert.ok(!(verifyNav.allowedRoles as string[]).includes("auditor"), "Auditor is removed from Proof Verification");
   assert.ok(verifyNav.allowedRoles.includes("vendor"), "Vendor can see Proof Verification");
   assert.ok(verifyNav.allowedRoles.includes("buyer"), "Buyer can see Proof Verification");
-  assert.ok(!verifyNav.allowedRoles.includes("trusted_importer"), "trusted_importer CANNOT see Proof Verification");
+  assert.ok(!(verifyNav.allowedRoles as string[]).includes("trusted_importer"), "trusted_importer CANNOT see Proof Verification");
 
   const dashboardNav = NAVIGATION_CONFIG.find((n) => n.href === "/dashboard");
   assert.ok(dashboardNav, "Dashboard nav item must exist");
   assert.ok(dashboardNav.allowedRoles.includes("buyer"), "Buyer can see Dashboard");
-  assert.ok(!dashboardNav.allowedRoles.includes("trusted_importer"), "trusted_importer is strictly excluded from Dashboard navigation to match route guard");
+  assert.ok(!(dashboardNav.allowedRoles as string[]).includes("trusted_importer"), "trusted_importer is strictly excluded from Dashboard navigation to match route guard");
+  assert.ok(!(dashboardNav.allowedRoles as string[]).includes("auditor"), "auditor is strictly excluded from Dashboard navigation to match route guard");
 
   const certificatesNav = NAVIGATION_CONFIG.find((n) => n.href === "/certificates");
   assert.ok(certificatesNav, "Certificates nav item must exist");

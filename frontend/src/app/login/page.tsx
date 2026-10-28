@@ -64,15 +64,11 @@ export default function LoginPage() {
       authTransport.setToken(response.access_token);
       
       // Bootstrap the active user session
-      const me = await authService.me();
+      await authService.me();
       refetchUser();
       
-      // Navigate to role-appropriate protected workspace
-      if (me.role === "trusted_importer") {
-        router.push("/admin/vulnerabilities");
-      } else {
-        router.push("/dashboard");
-      }
+      // Navigate to protected workspace
+      router.push("/dashboard");
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.status === 401) {
@@ -224,7 +220,7 @@ export default function LoginPage() {
             <div className="text-xs text-muted-foreground">
               Don&apos;t have an account?{" "}
               <Link href="/register" className="text-primary hover:underline font-medium">
-                Register as Auditor
+                Register as Buyer
               </Link>
             </div>
           </CardFooter>

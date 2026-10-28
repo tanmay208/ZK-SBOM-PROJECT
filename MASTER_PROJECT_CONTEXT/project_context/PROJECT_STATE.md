@@ -141,7 +141,7 @@ On 17 October 2026, bounded read-only inspection of the development container `z
 The project owner has provisionally adopted the following architectural directions for Stage D planning:
 1. **Detached Buyer Verification**: Adopted in principle, subject to separate cryptographic design review.
 2. **Certificate Revocation Authority**: Administrators may revoke any eligible certificate; vendors may revoke eligible certificates within their application ownership scope.
-3. **Planned 5-Role Model**: Formalize 5 roles across backend services: `vendor`, `buyer`, `auditor`, `admin`, `trusted_importer`.
+3. **Consolidated 3-Role Model**: Finalized 3 active roles across services: `vendor`, `buyer`, `admin` (legacy roles `auditor` and `trusted_importer` retired from active use; historical migrations 001–016 preserved).
 4. **Durable Database Audit Table**: Adopted for planning in Stage D7 (`audit.audit_logs`).
 5. **Policy Lifecycle & Application Updates**: Policy deactivation (`is_active: bool`) and tenant-scoped application updates with deletion safeguards adopted.
 
