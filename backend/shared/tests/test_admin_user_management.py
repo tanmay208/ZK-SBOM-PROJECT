@@ -218,21 +218,6 @@ def test_admin_list_users_filters(client, db_session):
     assert len(both_data) == 1
     assert both_data[0]["username"] == "buyer_act"
 
-    # Legacy account discovery filters (auditor, trusted_importer)
-    create_test_user(db_session, "legacy_auditor_acc", role="auditor")
-    create_test_user(db_session, "legacy_importer_acc", role="trusted_importer")
-
-    resp_auditor = client.get("/api/v1/admin/users?role=auditor", headers=headers)
-    assert resp_auditor.status_code == 200
-    auditor_data = resp_auditor.json()
-    assert len(auditor_data) == 1
-    assert auditor_data[0]["username"] == "legacy_auditor_acc"
-
-    resp_importer = client.get("/api/v1/admin/users?role=trusted_importer", headers=headers)
-    assert resp_importer.status_code == 200
-    importer_data = resp_importer.json()
-    assert len(importer_data) == 1
-    assert importer_data[0]["username"] == "legacy_importer_acc"
 
 
 def test_admin_list_users_invalid_parameters(client, db_session):
@@ -252,8 +237,8 @@ def test_admin_list_users_invalid_parameters(client, db_session):
     resp_zero_limit = client.get("/api/v1/admin/users?limit=0", headers=headers)
     assert resp_zero_limit.status_code == 422
 
-    # Unsupported arbitrary role filters rejected with 422
-    for rejected_filter in ["superadmin", "root", "operator", "guest"]:
+    # Legacy and unsupported role filters rejected with 422
+    for rejected_filter in ["superadmin", "root", "operator", "guest", "auditor", "trusted_importer"]:
         resp_bad = client.get(f"/api/v1/admin/users?role={rejected_filter}", headers=headers)
         assert resp_bad.status_code == 422
         assert "Invalid role filter" in resp_bad.text
@@ -392,16 +377,20 @@ def test_retired_roles_rejected_on_update_with_422(client, db_session):
 
 
 def test_legacy_user_discovery_and_remediation_lifecycle(client, db_session):
-    """Admin discovers a legacy account via role filter, remediates to buyer, and confirms reversion is rejected."""
+    """Admin discovers a legacy account via unfiltered listing, remediates to buyer, and confirms reversion is rejected."""
     admin = create_test_user(db_session, "admin_remediator", role="admin")
     legacy_user = create_test_user(db_session, "legacy_audit_user", role="auditor")
     headers = get_auth_headers(admin)
 
-    # 1. Admin discovers the legacy account via filter
-    resp_find = client.get("/api/v1/admin/users?role=auditor", headers=headers)
+    # 1. Admin discovers the legacy account via unfiltered listing; legacy role filter fails closed with 422
+    resp_find = client.get("/api/v1/admin/users", headers=headers)
     assert resp_find.status_code == 200
     data_find = resp_find.json()
-    assert any(u["id"] == str(legacy_user.id) for u in data_find)
+    assert any(u["id"] == str(legacy_user.id) and u["role"] == "auditor" for u in data_find)
+
+    resp_aud_filter = client.get("/api/v1/admin/users?role=auditor", headers=headers)
+    assert resp_aud_filter.status_code == 422
+    assert "Invalid role filter" in resp_aud_filter.text
 
     # 2. Admin remediates the legacy user to primary role 'buyer'
     resp_update = client.patch(
@@ -412,11 +401,9 @@ def test_legacy_user_discovery_and_remediation_lifecycle(client, db_session):
     assert resp_update.status_code == 200
     assert resp_update.json()["role"] == "buyer"
 
-    # 3. User is now in buyer filter, no longer in auditor filter
-    resp_aud_check = client.get("/api/v1/admin/users?role=auditor", headers=headers)
-    assert not any(u["id"] == str(legacy_user.id) for u in resp_aud_check.json())
-
+    # 3. User is now in buyer filter
     resp_buyer_check = client.get("/api/v1/admin/users?role=buyer", headers=headers)
+    assert resp_buyer_check.status_code == 200
     assert any(u["id"] == str(legacy_user.id) for u in resp_buyer_check.json())
 
     # 4. Attempting to revert the remediated user back to legacy role is rejected with 422
