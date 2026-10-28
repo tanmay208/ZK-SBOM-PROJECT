@@ -1,0 +1,12 @@
+# Shared backend runtime dependencies referenced by each service image.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
+alembic==1.14.1
+bcrypt==5.0.0
+PyJWT==2.12.1
+python-multipart==0.0.32
+
+packageurl-python==0.16.0

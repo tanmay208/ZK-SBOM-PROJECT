@@ -1,0 +1,44 @@
+{
+  "tampered_sbom_root": {
+    "mutation": "Replaced byte 32 of sbom_root with 0xff",
+    "code_path": "verifier._public_inputs_match -> result: public_input_mismatch",
+    "expected": "REJECTED (public_input_mismatch)",
+    "actual": "REJECTED (record_mismatch)",
+    "mocked": false
+  },
+  "tampered_vuln_db_root": {
+    "mutation": "Replaced byte 32 of vulnerability_db_root with 0xee",
+    "code_path": "verifier._public_inputs_match -> result: public_input_mismatch",
+    "expected": "REJECTED (public_input_mismatch)",
+    "actual": "REJECTED (record_mismatch)",
+    "mocked": false
+  },
+  "corrupted_proof_bytes": {
+    "mutation": "Mutated trailing 16 bytes of chunk 0 segment 0 proof to 0xff",
+    "code_path": "Archive expected_member_hashes check / bb verify -> result: invalid_proof",
+    "expected": "REJECTED (invalid_proof)",
+    "actual": "REJECTED (invalid_proof)",
+    "mocked": false
+  },
+  "truncated_proof_bytes": {
+    "mutation": "Truncated chunk 0 segment 0 proof from 2304 bytes down to 100 bytes",
+    "code_path": "profile.validate_segment_proof -> result: invalid_proof",
+    "expected": "REJECTED (invalid_proof)",
+    "actual": "REJECTED (invalid_proof)",
+    "mocked": false
+  },
+  "policy_threshold_violation": {
+    "mutation": "Created policy with max_cvss_score=3.0 (vulnerability CVSS is 4.3)",
+    "code_path": "verifier._public_inputs_match -> result: public_input_mismatch",
+    "expected": "REJECTED (public_input_mismatch)",
+    "actual": "REJECTED (invalid_proof)",
+    "mocked": false
+  },
+  "cross_tenant_rejection": {
+    "mutation": "Submitted valid verification request using foreign_user (unauthorized_buyer)",
+    "code_path": "verification_service tenant ownership check -> result: verification_unavailable",
+    "expected": "REJECTED (verification_unavailable)",
+    "actual": "REJECTED (verification_unavailable)",
+    "mocked": false
+  }
+}

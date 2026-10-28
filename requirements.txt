@@ -1,0 +1,10 @@
+# ==============================================================================
+# Zero-Knowledge SBOM Vulnerability Verification Platform
+# Root Python Runtime Dependencies
+# ==============================================================================
+# Direct runtime dependencies for local tooling, Alembic migrations, and backend services.
+# Core service requirements are defined in backend/shared/requirements.txt and shared
+# across Docker container build layers.
+
+-r backend/shared/requirements.txt
+python-dotenv==1.2.3

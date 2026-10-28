@@ -1,0 +1,84 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+/lib/
+/lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+.venv/
+.pytest_cache/
+
+# Testing & Coverage
+coverage/
+.coverage
+
+# Logs
+*.log
+logs/
+
+# Node
+node_modules/
+.next/
+dist/
+build/
+.env
+.env.*
+!.env.example
+!.env.local_dev.example
+db.txt
+
+# Noir/Nargo & Local Tooling
+target/
+Prover.toml
+Verifier.toml
+/proofs/
+.bin/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Project specific
+data/*
+!data/.gitkeep
+scripts/noir_src/
+
+# Scratch & Payloads
+scratch/
+scratch_*.txt
+request*.json
+test_baseline_output.txt
+
+# Local Cache & Database Backups
+.cache/
+*.sql
+
+# Historical Binary Releases & Duplicate Proof ZIPs
+master_archive/historical_releases/*.bak*
+archive/proofs/*.zip
+
+# Scratch circuit working dirs and local compose backups
+/circuits_dev/
+docker-compose.local.yml.bak*

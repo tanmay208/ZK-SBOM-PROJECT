@@ -1,0 +1,2 @@
+# Policy Service dependencies
+-r ../shared/requirements.txt

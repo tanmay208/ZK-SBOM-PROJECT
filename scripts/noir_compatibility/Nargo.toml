@@ -1,0 +1,5 @@
+[package]
+name = "noir_compatibility"
+type = "bin"
+authors = [""]
+compiler_version = "0.32.0"

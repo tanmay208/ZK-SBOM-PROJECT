@@ -1,0 +1,5 @@
+[package]
+name = "segment_mid"
+type = "bin"
+authors = [""]
+compiler_version = "0.32.0"
