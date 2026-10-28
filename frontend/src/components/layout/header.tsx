@@ -18,9 +18,8 @@ function getRoleBadgeVariant(role: string) {
       return "default";
     case "vendor":
       return "info";
-    case "trusted_importer":
-      return "warning";
-    case "auditor":
+    case "buyer":
+      return "info";
     default:
       return "secondary";
   }

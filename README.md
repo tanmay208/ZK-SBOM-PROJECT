@@ -14,7 +14,7 @@
 
 This research and engineering platform enables a software vendor to cryptographically prove that a Software Bill of Materials (SBOM) complies with a specific security policy against an authoritative vulnerability database snapshot, using zero-knowledge proofs (UltraPlonk / ACIR).
 
-A buyer or auditor independently verifies the proof and public commitments ($R_{\text{SBOM}}$, $R_{\text{VulnDB}}$, $H_{\text{Policy}}$) and consults an authorized verification certificate **without receiving or disclosing the private SBOM component inventory**.
+A buyer independently verifies the proof and public commitments ($R_{\text{SBOM}}$, $R_{\text{VulnDB}}$, $H_{\text{Policy}}$) and consults an authorized verification certificate **without receiving or disclosing the private SBOM component inventory**.
 
 A valid proof establishes compliance strictly against the identified policy and committed snapshot—it does not claim the software is universally free of all vulnerabilities.
 

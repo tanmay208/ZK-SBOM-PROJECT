@@ -5,7 +5,7 @@ import { adminService } from "@/api/services/adminService";
 import { AdminUser, Role } from "@/api/types";
 import { ApiError } from "@/api/errors";
 
-const APPROVED_ROLES: Role[] = ["vendor", "buyer", "auditor", "admin", "trusted_importer"];
+const APPROVED_ROLES: Role[] = ["vendor", "buyer", "admin"];
 
 test("Admin User Management - Navigation and Route Guard Alignment", () => {
   const usersNav = NAVIGATION_CONFIG.find((item) => item.href === "/admin/users");
@@ -18,16 +18,14 @@ test("Admin User Management - Navigation and Route Guard Alignment", () => {
   assert.strictEqual(isRouteActive("/admin/users", "/admin", true), false, "Exact /admin does not match /admin/users");
 });
 
-test("Admin User Management - Five Approved Roles Contract", () => {
-  assert.strictEqual(APPROVED_ROLES.length, 5, "Exactly 5 authorized roles in role model");
+test("Admin User Management - Three Approved Roles Contract", () => {
+  assert.strictEqual(APPROVED_ROLES.length, 3, "Exactly 3 authorized roles in role model");
   assert.ok(APPROVED_ROLES.includes("vendor"));
   assert.ok(APPROVED_ROLES.includes("buyer"));
-  assert.ok(APPROVED_ROLES.includes("auditor"));
   assert.ok(APPROVED_ROLES.includes("admin"));
-  assert.ok(APPROVED_ROLES.includes("trusted_importer"));
 
-  // Unauthorized roles must not exist in approved list
-  const unauthorizedRoles = ["root", "superadmin", "operator", "guest"];
+  // Unauthorized and legacy roles must not exist in approved list
+  const unauthorizedRoles = ["root", "superadmin", "operator", "guest", "auditor", "trusted_importer"];
   for (const r of unauthorizedRoles) {
     assert.ok(!APPROVED_ROLES.includes(r as Role), `Role ${r} must not be in approved roles`);
   }
@@ -279,7 +277,7 @@ test("Admin User Management - Error Normalisation for 400, 403, 404, 409, 422", 
       Response.json({ detail: "System integrity violation: no active administrators exist." }, { status: 409 });
 
     await assert.rejects(
-      adminService.updateUserRole("user-id", { role: "auditor" }),
+      adminService.updateUserRole("user-id", { role: "auditor" as unknown as Role }),
       (err: unknown) => {
         return err instanceof ApiError && err.status === 409;
       }
@@ -305,6 +303,6 @@ test("Admin User Management - Primary Assignable Roles Consolidation", async () 
   assert.deepStrictEqual(PRIMARY_ASSIGNABLE_ROLES, ["vendor", "buyer", "admin"], "Primary assignable roles are strictly vendor, buyer, admin");
   assert.ok(LEGACY_ROLES.includes("auditor"), "auditor preserved in legacy roles");
   assert.ok(LEGACY_ROLES.includes("trusted_importer"), "trusted_importer preserved in legacy roles");
-  assert.ok(!PRIMARY_ASSIGNABLE_ROLES.includes("auditor" as Role), "auditor is not assignable as a new primary role");
-  assert.ok(!PRIMARY_ASSIGNABLE_ROLES.includes("trusted_importer" as Role), "trusted_importer is not assignable as a new primary role");
+  assert.ok(!PRIMARY_ASSIGNABLE_ROLES.includes("auditor" as unknown as Role), "auditor is not assignable as a new primary role");
+  assert.ok(!PRIMARY_ASSIGNABLE_ROLES.includes("trusted_importer" as unknown as Role), "trusted_importer is not assignable as a new primary role");
 });

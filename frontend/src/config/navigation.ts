@@ -12,7 +12,7 @@ import {
   AppWindow,
 } from "lucide-react";
 
-export type Role = "vendor" | "admin" | "auditor" | "trusted_importer" | "buyer";
+export type Role = "vendor" | "admin" | "buyer";
 
 export interface NavItem {
   name: string;
@@ -29,7 +29,7 @@ export const NAVIGATION_CONFIG: NavItem[] = [
     name: "Dashboard",
     href: "/dashboard",
     icon: LayoutDashboard,
-    allowedRoles: ["vendor", "admin", "auditor", "buyer"],
+    allowedRoles: ["vendor", "admin", "buyer"],
     exactMatch: true,
     section: "Workspace",
   },
@@ -51,7 +51,7 @@ export const NAVIGATION_CONFIG: NavItem[] = [
     name: "Profile & Settings",
     href: "/profile",
     icon: User,
-    allowedRoles: ["vendor", "admin", "auditor", "trusted_importer", "buyer"],
+    allowedRoles: ["vendor", "admin", "buyer"],
     exactMatch: true,
     section: "Workspace",
   },
@@ -68,14 +68,14 @@ export const NAVIGATION_CONFIG: NavItem[] = [
     name: "Proof Verification",
     href: "/verify",
     icon: CheckCircle2,
-    allowedRoles: ["vendor", "admin", "auditor", "buyer"],
+    allowedRoles: ["vendor", "admin", "buyer"],
     section: "Zero-Knowledge",
   },
   {
     name: "Certificates",
     href: "/certificates",
     icon: Award,
-    allowedRoles: ["vendor", "admin", "auditor", "buyer"],
+    allowedRoles: ["vendor", "admin", "buyer"],
     section: "Zero-Knowledge",
   },
 
@@ -99,14 +99,14 @@ export const NAVIGATION_CONFIG: NavItem[] = [
     name: "Security Policies",
     href: "/admin/policies",
     icon: ShieldCheck,
-    allowedRoles: ["vendor", "admin", "auditor", "buyer"],
+    allowedRoles: ["vendor", "admin", "buyer"],
     section: "Governance & Intel",
   },
   {
     name: "Vulnerability Intel",
     href: "/admin/vulnerabilities",
     icon: ShieldAlert,
-    allowedRoles: ["vendor", "admin", "auditor", "buyer", "trusted_importer"],
+    allowedRoles: ["vendor", "admin", "buyer"],
     section: "Governance & Intel",
   },
 ];

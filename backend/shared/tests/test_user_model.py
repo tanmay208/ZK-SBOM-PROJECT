@@ -134,11 +134,13 @@ def test_five_role_compatibility():
 
 
 def test_stage_g2_primary_and_legacy_roles():
-    """Verify Stage G2 primary and legacy roles are properly defined on user model."""
+    """Verify primary and legacy roles are properly defined on user model, with supported roles strictly consolidated to 3."""
     from shared.models.user import PRIMARY_ROLES, LEGACY_ROLES, ALL_SUPPORTED_ROLES
     assert PRIMARY_ROLES == ("vendor", "buyer", "admin")
     assert LEGACY_ROLES == ("auditor", "trusted_importer")
-    assert set(ALL_SUPPORTED_ROLES) == {"vendor", "buyer", "admin", "auditor", "trusted_importer"}
+    assert set(ALL_SUPPORTED_ROLES) == {"vendor", "buyer", "admin"}
+    assert "auditor" not in ALL_SUPPORTED_ROLES
+    assert "trusted_importer" not in ALL_SUPPORTED_ROLES
 
 
 def test_user_instance_lifecycle_attributes():

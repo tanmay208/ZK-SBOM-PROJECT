@@ -236,10 +236,11 @@ def test_admin_list_users_invalid_parameters(client, db_session):
     resp_zero_limit = client.get("/api/v1/admin/users?limit=0", headers=headers)
     assert resp_zero_limit.status_code == 422
 
-    # Unrecognized role filter
-    resp_bad_role = client.get("/api/v1/admin/users?role=superadmin", headers=headers)
-    assert resp_bad_role.status_code == 422
-    assert "Invalid role filter" in resp_bad_role.text
+    # Legacy and unsupported role filters rejected with 422
+    for rejected_filter in ["superadmin", "auditor", "trusted_importer"]:
+        resp_bad = client.get(f"/api/v1/admin/users?role={rejected_filter}", headers=headers)
+        assert resp_bad.status_code == 422
+        assert "Invalid role filter" in resp_bad.text
 
 
 # ---------------------------------------------------------------------------

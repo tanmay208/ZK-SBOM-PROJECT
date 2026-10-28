@@ -41,8 +41,7 @@ function VulnerabilityManagement() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
-  const isImporter = user?.role === "trusted_importer";
-  const canIngest = isAdmin || isImporter;
+  const canIngest = isAdmin;
 
   const [sourceIdentity, setSourceIdentity] = useState<TrustedVulnerabilitySource>("NVD");
   const [provenanceJson, setProvenanceJson] = useState('{\n  "feed_version": "1.0",\n  "collector": "authoritative_feed"\n}');
@@ -403,15 +402,6 @@ function VulnerabilityManagement() {
                       </AlertDescription>
                     </Alert>
                   )}
-                  {isImporter && !isAdmin && (
-                    <Alert className="bg-muted/40 border-border/70">
-                      <Shield className="size-4 text-primary" />
-                      <AlertTitle className="text-xs font-semibold">Separation of Duties Notice</AlertTitle>
-                      <AlertDescription className="text-[11px] mt-0.5 text-muted-foreground leading-relaxed">
-                        Feed ingestion is restricted to authorized importers (<code>trusted_importer</code>). Administrators hold approval and freezing authority.
-                      </AlertDescription>
-                    </Alert>
-                  )}
 
                   {Boolean(ingestError || ingestMutation.error) && (
                     <Alert variant="destructive">
@@ -516,7 +506,7 @@ function VulnerabilityManagement() {
 
 export default function AdminVulnerabilitiesPage() {
   return (
-    <RouteGuard allowedRoles={["vendor", "admin", "auditor", "buyer", "trusted_importer"]}>
+    <RouteGuard allowedRoles={["vendor", "admin", "buyer"]}>
       <VulnerabilityManagement />
     </RouteGuard>
   );

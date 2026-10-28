@@ -390,7 +390,7 @@ function CertificateList() {
 
 export default function CertificatesPage() {
   return (
-    <RouteGuard allowedRoles={["vendor", "admin", "auditor", "buyer"]}>
+    <RouteGuard allowedRoles={["vendor", "admin", "buyer"]}>
       <CertificateList />
     </RouteGuard>
   );

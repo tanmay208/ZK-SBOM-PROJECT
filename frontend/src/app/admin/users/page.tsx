@@ -39,14 +39,13 @@ export const PRIMARY_ASSIGNABLE_ROLES: Role[] = [
   "admin",
 ];
 
-export const LEGACY_ROLES: Role[] = [
+export const LEGACY_ROLES: string[] = [
   "auditor",
   "trusted_importer",
 ];
 
 export const APPROVED_ROLES: Role[] = [
   ...PRIMARY_ASSIGNABLE_ROLES,
-  ...LEGACY_ROLES,
 ];
 
 interface PendingAction {
@@ -398,20 +397,11 @@ export function AdminUsersContent() {
                   className="h-8 rounded-md border border-input bg-background px-3 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 >
                   <option value="all">All Roles</option>
-                  <optgroup label="Primary Roles">
-                    {PRIMARY_ASSIGNABLE_ROLES.map((r) => (
-                      <option key={r} value={r}>
-                        {r}
-                      </option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Legacy Roles">
-                    {LEGACY_ROLES.map((r) => (
-                      <option key={r} value={r}>
-                        {r}
-                      </option>
-                    ))}
-                  </optgroup>
+                  {PRIMARY_ASSIGNABLE_ROLES.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
                 </select>
               </div>
 

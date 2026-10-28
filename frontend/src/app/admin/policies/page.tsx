@@ -441,7 +441,7 @@ function PolicyManagement() {
 
 export default function AdminPoliciesPage() {
   return (
-    <RouteGuard allowedRoles={["vendor", "admin", "auditor", "buyer"]}>
+    <RouteGuard allowedRoles={["vendor", "admin", "buyer"]}>
       <PolicyManagement />
     </RouteGuard>
   );

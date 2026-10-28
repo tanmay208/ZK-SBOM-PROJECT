@@ -624,7 +624,7 @@ function VerificationForm() {
 
 export default function VerifyPage() {
   return (
-    <RouteGuard allowedRoles={["vendor", "admin", "auditor", "buyer"]}>
+    <RouteGuard allowedRoles={["vendor", "admin", "buyer"]}>
       <Suspense
         fallback={
           <div className="flex flex-col items-center justify-center py-16 gap-3">
