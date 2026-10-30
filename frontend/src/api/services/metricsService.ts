@@ -1,5 +1,5 @@
 import { apiClient } from "../client";
-import { BackendMetricsResponse, DashboardMetrics } from "../types";
+import { BackendMetricsResponse, DashboardMetrics, AdminGovernanceMetrics } from "../types";
 
 export const metricsService = {
   getMetrics: async (): Promise<DashboardMetrics> => {
@@ -16,5 +16,11 @@ export const metricsService = {
       verification_count: raw.total_verifications,
       certificate_count: raw.total_certificates,
     };
-  }
+  },
+
+  getGovernanceMetrics: async (): Promise<AdminGovernanceMetrics> => {
+    return apiClient<AdminGovernanceMetrics>("/api/v1/admin/metrics", {
+      method: "GET",
+    });
+  },
 };

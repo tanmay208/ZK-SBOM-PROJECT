@@ -55,6 +55,57 @@ export interface BackendMetricsResponse {
   total_verifications: number;
 }
 
+
+export interface AdminGovernanceMetrics {
+  timestamp: string;
+  users: {
+    total: number;
+    by_role: Record<string, number>;
+    by_status: Record<string, number>;
+  };
+  applications: {
+    total: number;
+    active: number;
+    archived: number;
+  };
+  sboms: {
+    total: number;
+    committed: number;
+    by_status: Record<string, number>;
+  };
+  proof_jobs: {
+    total: number;
+    completed: number;
+    running: number;
+    pending: number;
+    failed: number;
+    by_status: Record<string, number>;
+  };
+  verifications: {
+    total: number;
+    verified: number;
+    unavailable: number;
+    by_result: Record<string, number>;
+  };
+  certificates: {
+    total: number;
+    active: number;
+    revoked: number;
+  };
+  policies: {
+    total: number;
+    active: number;
+    inactive: number;
+  };
+  vulnerabilities: {
+    total_snapshots: number;
+    frozen: number;
+    by_status: Record<string, number>;
+    latest_snapshot_root: string | null;
+    latest_snapshot_created_at: string | null;
+  };
+}
+
 export interface DashboardMetrics {
   total_sboms: number;
   total_jobs: number;
@@ -94,6 +145,7 @@ export interface ApplicationListParams {
   skip?: number;
   limit?: number;
   include_archived?: boolean;
+  all_tenants?: boolean;
 }
 
 // SBOM
@@ -238,6 +290,31 @@ export interface VerifyProofRequest {
   policy_hash: string;
   proof_artifact?: string | null;
   proof_job_id?: string | null;
+  share_token?: string | null;
+}
+
+export interface CreateProofShareRequest {
+  proof_job_id: string;
+  recipient_role?: Role;
+  recipient_user_id?: string | null;
+  expires_in_hours?: number | null;
+}
+
+export interface ProofShareResponse {
+  id: string;
+  proof_job_id: string;
+  vendor_id: string;
+  share_token: string;
+  recipient_role: string;
+  recipient_user_id?: string | null;
+  is_revoked: boolean;
+  revoked_at?: string | null;
+  expires_at?: string | null;
+  created_at: string;
+  is_active: boolean;
+  sbom_root?: string | null;
+  vulnerability_db_root?: string | null;
+  policy_hash?: string | null;
 }
 
 export interface VerificationCertificateResponse {

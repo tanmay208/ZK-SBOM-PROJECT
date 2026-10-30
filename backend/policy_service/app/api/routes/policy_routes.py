@@ -70,6 +70,7 @@ def add_policy(
         max_cvss_score=request.max_cvss_score,
         name=request.name or "CVSS Security Policy",
         description=request.description,
+        user_id=current_user.id,
     )
     return PolicyResponse.from_model(policy)
 
@@ -90,6 +91,6 @@ def activate_policy_route(
       - Safe and idempotent on repeated activations.
       - Returns non-disclosing HTTP 404 if the policy does not exist.
     """
-    policy = activate_policy(db, policy_id=policy_id)
+    policy = activate_policy(db, policy_id=policy_id, user_id=current_user.id)
     return PolicyResponse.from_model(policy)
 

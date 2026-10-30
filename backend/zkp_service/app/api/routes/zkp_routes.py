@@ -55,7 +55,7 @@ def generate_proof(
     background_tasks: BackgroundTasks,
     http_request: Request,
     db: Session = Depends(get_session),
-    current_user: User = Depends(require_roles("vendor", "admin")),
+    current_user: User = Depends(require_roles("vendor")),
 ):
     """
     Initialize a ZKP generation job based on existing authoritative snapshots.

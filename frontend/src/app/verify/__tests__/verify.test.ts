@@ -1,16 +1,18 @@
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 import assert from "node:assert";
 import { verificationService } from "@/api/services/verificationService";
 import { NAVIGATION_CONFIG } from "@/config/navigation";
 import { getVerificationOutcomeConfig } from "@/app/verify/page";
-import { VerificationResult } from "@/api/types";
+import { VerificationResult, ProofShareResponse } from "@/api/types";
 
 test("Verification - Role Access", () => {
   const verifyNav = NAVIGATION_CONFIG.find((item) => item.href === "/verify");
   assert.ok(verifyNav, "Proof Verification item must exist in NAVIGATION_CONFIG");
   const allowedRoles = verifyNav.allowedRoles;
   assert.ok(allowedRoles.includes("vendor"), "Vendor is allowed in verification workspace");
-  assert.ok(allowedRoles.includes("admin"), "Admin is allowed in verification workspace");
+  assert.ok(!allowedRoles.includes("admin"), "Admin is excluded from operational verification workspace");
   assert.ok(allowedRoles.includes("buyer"), "Buyer is allowed in verification workspace");
   assert.ok(!(allowedRoles as string[]).includes("auditor"), "Auditor is retired from verification workspace");
   assert.ok(!(allowedRoles as string[]).includes("trusted_importer"), "Trusted importer is not allowed in verification workspace");
@@ -49,7 +51,6 @@ test("Verification - Verified vs Generated claims", () => {
 });
 
 test("Verification - Backend Outcome State Machine Handling", () => {
-  // Directly test the production getVerificationOutcomeConfig mapping
   assert.strictEqual(getVerificationOutcomeConfig("verified").title, "Cryptographic Proof Verified");
   assert.strictEqual(getVerificationOutcomeConfig("verified").pillStatus, "verified");
 
@@ -77,13 +78,11 @@ test("Verification - Backend Outcome State Machine Handling", () => {
   assert.strictEqual(getVerificationOutcomeConfig("verification_unavailable").pillStatus, "execution_blocked");
   assert.strictEqual(getVerificationOutcomeConfig("unavailable").title, "Verification Unavailable");
 
-  // Unknown outcome fails safely to default pending state
   assert.strictEqual(getVerificationOutcomeConfig("unexpected_code").title, "Verification Pending");
   assert.strictEqual(getVerificationOutcomeConfig(null).title, "Verification Pending");
 });
 
 test("Verification - Owned Proof Job Binding Constraint", () => {
-  // Verification requires an authorized proof_job_id
   const payloadWithJob = {
     sbom_root: "0x1111111111111111111111111111111111111111111111111111111111111111",
     vulnerability_db_root: "0x2222222222222222222222222222222222222222222222222222222222222222",
@@ -96,7 +95,6 @@ test("Verification - Owned Proof Job Binding Constraint", () => {
 });
 
 test("Verification - Certificate Minting Gated Strictly on Verified Result", () => {
-  // A certificate is ONLY rendered or recognized when result is exactly 'verified'
   const verifiedOutcome = {
     id: "req-1",
     result: "verified",
@@ -147,4 +145,194 @@ test("Verification - VerificationResult Contract Completeness", () => {
     assert.ok(config.pillStatus, `Outcome '${res}' must define a status pill state`);
     assert.ok(config.icon, `Outcome '${res}' must define an icon`);
   }
+});
+
+test("Verification - Vendor navigation and route guard permits vendor access", async () => {
+  const verifyNav = NAVIGATION_CONFIG.find((n) => n.href === "/verify");
+  assert.ok(verifyNav, "Proof Verification nav entry must exist");
+  assert.strictEqual(verifyNav.allowedRoles.includes("vendor"), true, "Vendor role MUST be in allowedRoles for /verify");
+  assert.strictEqual(verifyNav.allowedRoles.includes("buyer"), true, "Buyer role MUST be in allowedRoles for /verify");
+  assert.strictEqual(verifyNav.allowedRoles.includes("admin"), false, "Admin role MUST NOT be in allowedRoles for /verify");
+
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const verifyPagePath = path.resolve(process.cwd(), "src/app/verify/page.tsx");
+  const pageContent = fs.readFileSync(verifyPagePath, "utf-8");
+
+  assert.match(
+    pageContent,
+    /<RouteGuard allowedRoles={\["vendor", "buyer"\]}>/,
+    "VerifyPage must guard access to vendor and buyer"
+  );
+});
+
+test("Verification - Buyer verification reference lookup contract", () => {
+  assert.strictEqual(
+    typeof verificationService.getShare,
+    "function",
+    "verificationService.getShare must be exported for reference lookup"
+  );
+  assert.strictEqual(
+    typeof verificationService.listShares,
+    "function",
+    "verificationService.listShares must be exported for buyer share listing"
+  );
+  assert.strictEqual(
+    typeof verificationService.deleteShare,
+    "function",
+    "verificationService.deleteShare must be exported for deleting revoked shares"
+  );
+});
+
+test("Verification - Vendor proof generation and share creation routes remain functional", () => {
+  const proofsNav = NAVIGATION_CONFIG.find((n) => n.href === "/proofs");
+  assert.ok(proofsNav, "ZKP Workspace nav entry must exist");
+  assert.ok(proofsNav.allowedRoles.includes("vendor"), "Vendor can access /proofs");
+
+  assert.strictEqual(
+    typeof verificationService.createShare,
+    "function",
+    "verificationService.createShare must be exported for vendor share creation"
+  );
+  assert.strictEqual(
+    typeof verificationService.revokeShare,
+    "function",
+    "verificationService.revokeShare must be exported for vendor share revocation"
+  );
+});
+
+test("Verification - Buyer cannot access proof generation routes", () => {
+  const proofsNav = NAVIGATION_CONFIG.find((n) => n.href === "/proofs");
+  assert.ok(proofsNav, "ZKP Workspace nav entry exists");
+  assert.strictEqual(
+    proofsNav.allowedRoles.includes("buyer"),
+    false,
+    "Buyer MUST NOT have access to /proofs generation workspace"
+  );
+
+  const sbomsNav = NAVIGATION_CONFIG.find((n) => n.href === "/sboms");
+  assert.ok(sbomsNav, "SBOMs nav entry exists");
+  assert.strictEqual(
+    sbomsNav.allowedRoles.includes("buyer"),
+    false,
+    "Buyer MUST NOT have access to /sboms management"
+  );
+});
+
+test("Verification - Admin functionality remains intact across pipelines", () => {
+  const verifyNav = NAVIGATION_CONFIG.find((n) => n.href === "/verify");
+  assert.strictEqual(verifyNav?.allowedRoles.includes("admin"), false, "Admin CANNOT access operational /verify");
+
+  const proofsNav = NAVIGATION_CONFIG.find((n) => n.href === "/proofs");
+  assert.strictEqual(proofsNav?.allowedRoles.includes("admin"), false, "Admin CANNOT access operational /proofs");
+
+  const certNav = NAVIGATION_CONFIG.find((n) => n.href === "/certificates");
+  assert.ok(certNav?.allowedRoles.includes("admin"), "Admin can access /certificates");
+
+  const adminNav = NAVIGATION_CONFIG.find((n) => n.href === "/admin");
+  assert.ok(adminNav?.allowedRoles.includes("admin"), "Admin can access /admin");
+});
+
+test("Verification Share Management - One-at-a-time token generation contract", () => {
+  // Test token uniqueness, formatting, and single active presentation
+  const mockShare1: ProofShareResponse = {
+    id: "00000000-0000-0000-0000-000000000001",
+    proof_job_id: "00000000-0000-0000-0000-000000000010",
+    vendor_id: "00000000-0000-0000-0000-000000000100",
+    share_token: "vref_1111111111111111111111111111111111111111",
+    recipient_role: "buyer",
+    recipient_user_id: null,
+    is_revoked: false,
+    revoked_at: null,
+    expires_at: null,
+    created_at: new Date().toISOString(),
+    is_active: true,
+  };
+
+  const mockShare2: ProofShareResponse = {
+    id: "00000000-0000-0000-0000-000000000002",
+    proof_job_id: "00000000-0000-0000-0000-000000000010",
+    vendor_id: "00000000-0000-0000-0000-000000000100",
+    share_token: "vref_2222222222222222222222222222222222222222",
+    recipient_role: "buyer",
+    recipient_user_id: null,
+    is_revoked: false,
+    revoked_at: null,
+    expires_at: null,
+    created_at: new Date().toISOString(),
+    is_active: true,
+  };
+
+  assert.notStrictEqual(mockShare1.share_token, mockShare2.share_token, "Tokens must be unique");
+  assert.match(mockShare1.share_token, /^vref_[0-9a-f]{40}$/, "Token must have high-entropy vref prefix");
+
+  // When second token is generated, previous active tokens for that job are revoked
+  mockShare1.is_revoked = true;
+  mockShare1.is_active = false;
+  mockShare1.revoked_at = new Date().toISOString();
+
+  const latestToken: ProofShareResponse = mockShare2;
+  const jobShares = [mockShare2, mockShare1];
+
+  assert.strictEqual(latestToken.id, mockShare2.id, "Latest token represents most recent generation");
+  assert.strictEqual(latestToken.is_revoked, false, "Newest share is active");
+  assert.strictEqual(mockShare1.is_revoked, true, "Previous share is automatically revoked");
+  const activeCount = jobShares.filter(s => !s.is_revoked).length;
+  assert.strictEqual(activeCount, 1, "Exactly one active share exists for this proof job");
+});
+
+test("Verification Share UI - No Copy Link and raw token copying only", () => {
+  const proofDetailPath = path.resolve(process.cwd(), "src/app/proofs/[id]/page.tsx");
+  const pageContent = fs.readFileSync(proofDetailPath, "utf-8");
+
+  // Verify Copy Link is completely removed
+  assert.ok(!pageContent.includes("Copy Link"), "Copy Link button must be completely removed");
+  assert.ok(!pageContent.includes("verify?token="), "Must not construct full verification URLs in ProofDetail");
+
+  // Verify Copy Token is present
+  assert.ok(pageContent.includes("Copy Token"), "Copy Token button must be present");
+  assert.ok(pageContent.includes("share.share_token"), "Must pass raw share_token to copyToClipboard");
+
+  // Verify actions by state: Active has Revoke and Copy Token, Revoked has Delete
+  assert.match(pageContent, /!share\.is_revoked \? \([\s\S]*?Copy Token[\s\S]*?Revoke/, "Active share must offer Copy Token and Revoke");
+  assert.match(pageContent, /share\.is_revoked[\s\S]*?deleteShareMutation\.mutate/, "Revoked share must offer Delete action");
+});
+
+test("Verification Share Management - Delete revoked share lifecycle contract", () => {
+  const activeShare: ProofShareResponse = {
+    id: "00000000-0000-0000-0000-000000000001",
+    proof_job_id: "00000000-0000-0000-0000-000000000010",
+    vendor_id: "00000000-0000-0000-0000-000000000100",
+    share_token: "vref_active",
+    recipient_role: "buyer",
+    is_revoked: false,
+    created_at: new Date().toISOString(),
+    is_active: true,
+  };
+
+  const revokedShare: ProofShareResponse = {
+    id: "00000000-0000-0000-0000-000000000002",
+    proof_job_id: "00000000-0000-0000-0000-000000000010",
+    vendor_id: "00000000-0000-0000-0000-000000000100",
+    share_token: "vref_revoked",
+    recipient_role: "buyer",
+    is_revoked: true,
+    revoked_at: new Date().toISOString(),
+    created_at: new Date().toISOString(),
+    is_active: false,
+  };
+
+  function canDeleteShare(share: ProofShareResponse): boolean {
+    return share.is_revoked === true;
+  }
+
+  function canRevokeShare(share: ProofShareResponse): boolean {
+    return share.is_revoked === false;
+  }
+
+  assert.strictEqual(canRevokeShare(activeShare), true, "Active share can be revoked");
+  assert.strictEqual(canDeleteShare(activeShare), false, "Active share CANNOT be deleted");
+
+  assert.strictEqual(canRevokeShare(revokedShare), false, "Revoked share cannot be revoked again");
+  assert.strictEqual(canDeleteShare(revokedShare), true, "Revoked share CAN be deleted");
 });

@@ -31,6 +31,7 @@ import {
   UserCheck,
   Users,
   UserX,
+  Trash2,
 } from "lucide-react";
 
 export const PRIMARY_ASSIGNABLE_ROLES: Role[] = [
@@ -49,7 +50,7 @@ export const APPROVED_ROLES: Role[] = [
 ];
 
 interface PendingAction {
-  type: "role" | "status";
+  type: "role" | "status" | "delete";
   user: AdminUser;
   targetRole?: Role;
   targetStatus?: boolean;
@@ -155,7 +156,32 @@ export function AdminUsersContent() {
     },
   });
 
-  const isMutating = roleMutation.isPending || statusMutation.isPending;
+  // Delete user mutation
+  const deleteMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      return adminService.deleteUser(userId);
+    },
+    onSuccess: (data) => {
+      setSuccessMessage(
+        `Successfully deleted user "${data.username}". Active credentials and sessions have been invalidated.`
+      );
+      setActionError(null);
+      setPendingAction(null);
+      queryClient.invalidateQueries({ queryKey: ["adminUsers"] });
+    },
+    onError: (err: unknown) => {
+      const msg =
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+          ? err.message
+          : "An unexpected error occurred during user deletion.";
+      setActionError(msg);
+      setSuccessMessage(null);
+    },
+  });
+
+  const isMutating = roleMutation.isPending || statusMutation.isPending || deleteMutation.isPending;
 
   const handleRoleInitiate = (user: AdminUser) => {
     const initialRole = PRIMARY_ASSIGNABLE_ROLES.includes(user.role)
@@ -181,6 +207,15 @@ export function AdminUsersContent() {
     });
   };
 
+  const handleDeleteInitiate = (user: AdminUser) => {
+    setActionError(null);
+    setSuccessMessage(null);
+    setPendingAction({
+      type: "delete",
+      user,
+    });
+  };
+
   const handleConfirmAction = () => {
     if (!pendingAction) return;
 
@@ -194,6 +229,8 @@ export function AdminUsersContent() {
         userId: pendingAction.user.id,
         isActive: pendingAction.targetStatus ?? !pendingAction.user.is_active,
       });
+    } else if (pendingAction.type === "delete") {
+      deleteMutation.mutate(pendingAction.user.id);
     }
   };
 
@@ -322,7 +359,7 @@ export function AdminUsersContent() {
                     </p>
                   )}
                 </div>
-              ) : (
+              ) : pendingAction.type === "status" ? (
                 <div className="space-y-2 pt-2 border-t border-border/50">
                   <div className="text-xs">
                     Current Status:{" "}
@@ -342,6 +379,18 @@ export function AdminUsersContent() {
                     </p>
                   )}
                 </div>
+              ) : (
+                <div className="space-y-2 pt-2 border-t border-border/50">
+                  <div className="text-xs text-destructive font-medium">
+                    Permanent Account Deletion: <span className="font-mono font-bold text-foreground">{pendingAction.user.username}</span> ({pendingAction.user.role})
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Warning: Deleting this account permanently removes the user from the active directory and immediately invalidates all active sessions, JWT tokens, and credentials.
+                  </p>
+                  <p className="text-[11px] text-emerald-600 dark:text-emerald-400">
+                    Referential Integrity Guarantee: Historical cryptographic certificates, proof archives, and audit evidence remain preserved.
+                  </p>
+                </div>
               )}
             </div>
 
@@ -355,7 +404,7 @@ export function AdminUsersContent() {
                 Cancel
               </Button>
               <Button
-                variant={pendingAction.type === "status" && !pendingAction.targetStatus ? "destructive" : "default"}
+                variant={pendingAction.type === "delete" || (pendingAction.type === "status" && !pendingAction.targetStatus) ? "destructive" : "default"}
                 size="sm"
                 onClick={handleConfirmAction}
                 disabled={isMutating || (pendingAction.type === "role" && selectedRole === pendingAction.user.role)}
@@ -364,7 +413,9 @@ export function AdminUsersContent() {
                 {isMutating && <Loader2 className="size-3.5 animate-spin" />}
                 <span>
                   {isMutating
-                    ? "Applying Mutation..."
+                    ? "Processing..."
+                    : pendingAction.type === "delete"
+                    ? "Confirm Deletion"
                     : pendingAction.type === "role"
                     ? "Apply Role Change"
                     : pendingAction.targetStatus
@@ -588,6 +639,32 @@ export function AdminUsersContent() {
                               >
                                 <UserCheck className="size-3 mr-1" />
                                 <span>Activate</span>
+                              </Button>
+                            )}
+
+                            {/* Delete User Button (Vendor and Buyer only; Admin cannot be deleted) */}
+                            {u.role !== "admin" ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleDeleteInitiate(u)}
+                                disabled={isMutating}
+                                className="h-7 text-xs px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                title={`Delete ${u.role} account`}
+                              >
+                                <Trash2 className="size-3 mr-1" />
+                                <span>Delete</span>
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={true}
+                                className="h-7 text-xs px-2 opacity-40 cursor-not-allowed"
+                                title="Administrator accounts cannot be deleted (system invariant)"
+                              >
+                                <Trash2 className="size-3 mr-1" />
+                                <span>Delete</span>
                               </Button>
                             )}
                           </div>

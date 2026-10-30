@@ -889,7 +889,7 @@ function SbomUploadForm() {
 
 export default function SbomUploadPage() {
   return (
-    <RouteGuard allowedRoles={["vendor", "admin"]}>
+    <RouteGuard allowedRoles={["vendor"]}>
       <SbomUploadForm />
     </RouteGuard>
   );

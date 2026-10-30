@@ -188,6 +188,36 @@ class ProverService:
             components = self._session.query(Component).filter(
                 Component.sbom_upload_id == sbom.id
             ).order_by(Component.position).all()
+
+            # Snapshot ecosystem coverage and suitability pre-flight gate
+            from vulnerability_service.app.services.snapshot_validator import (
+                SnapshotValidator,
+                ComponentIdentity,
+            )
+            sbom_component_identities = []
+            for c in components:
+                eco = "unknown"
+                if c.purl_canonical and ":" in c.purl_canonical and "/" in c.purl_canonical:
+                    eco = c.purl_canonical.split(":", 1)[1].split("/", 1)[0].lower()
+                sbom_component_identities.append(
+                    ComponentIdentity(
+                        ecosystem=eco,
+                        name=c.name or "unknown",
+                        version=c.version,
+                        purl=c.purl_canonical,
+                        is_valid=bool(c.purl_canonical and c.name),
+                    )
+                )
+
+            is_suitable, suitability_blockers = SnapshotValidator.validate_snapshot_suitability_for_sbom(
+                snapshot, sbom_component_identities
+            )
+            if not is_suitable:
+                reason_str = "; ".join(suitability_blockers)
+                logger.warning(f"Proof job {job_id} aborted: snapshot unsuitable for SBOM: {reason_str}")
+                return self._repo.update_job_status(
+                    job_id, "failed", error_message=f"Snapshot unsuitable for SBOM: {reason_str}"
+                )
             
             mappings = self._session.query(ComponentVulnerabilityMapping).filter(
                 ComponentVulnerabilityMapping.snapshot_id == snapshot.id

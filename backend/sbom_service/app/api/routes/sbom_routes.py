@@ -155,7 +155,7 @@ def get_sbom(
 async def upload_sbom(
     request: Request,
     session: Session = Depends(get_session),
-    current_user: User = Depends(require_roles("vendor", "admin")),
+    current_user: User = Depends(require_roles("vendor")),
 ) -> SBOMUploadResponse:
     """
     POST /api/v1/sbom/upload

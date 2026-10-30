@@ -14,6 +14,9 @@ export const applicationService = {
     if (params?.include_archived !== undefined) {
       query.set("include_archived", params.include_archived ? "true" : "false");
     }
+    if (params?.all_tenants !== undefined) {
+      query.set("all_tenants", params.all_tenants ? "true" : "false");
+    }
     const qs = query.toString();
     return apiClient<ApplicationResponse[]>(`/api/v1/applications${qs ? `?${qs}` : ""}`, {
       method: "GET",

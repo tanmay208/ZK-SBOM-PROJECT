@@ -5,6 +5,7 @@ import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { certificateService } from "@/api/services/certificateService";
 import { RouteGuard } from "@/auth/RouteGuard";
+import { useAuth } from "@/auth/AuthProvider";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,9 +31,12 @@ import {
   ShieldCheck,
   X,
   XCircle,
+  Zap,
 } from "lucide-react";
 
 function CertificateList() {
+  const { user } = useAuth();
+  const isVendor = user?.role === "vendor";
   const {
     data: certificates,
     isLoading,
@@ -109,10 +113,17 @@ function CertificateList() {
               <RotateCw className={cn("size-3.5", (isLoading || isFetching) && "animate-spin")} />
               <span>Refresh</span>
             </Button>
-            <Link href="/verify" className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}>
-              <ShieldCheck className="size-4" />
-              <span>Verify a Proof</span>
-            </Link>
+            {isVendor ? (
+              <Link href="/proofs" className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}>
+                <Zap className="size-4" />
+                <span>Proof Pipeline</span>
+              </Link>
+            ) : (
+              <Link href="/verify" className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}>
+                <ShieldCheck className="size-4" />
+                <span>Verify a Proof</span>
+              </Link>
+            )}
           </div>
         }
       />
@@ -266,10 +277,17 @@ function CertificateList() {
               title="No certificates issued"
               description="Certificates are automatically minted when an UltraPlonk proof is successfully verified against authoritative roots."
               action={
-                <Link href="/verify" className={cn(buttonVariants(), "gap-2")}>
-                  <ShieldCheck className="size-4" />
-                  Go to Verification
-                </Link>
+                isVendor ? (
+                  <Link href="/proofs" className={cn(buttonVariants(), "gap-2")}>
+                    <Zap className="size-4" />
+                    Go to Proof Pipeline
+                  </Link>
+                ) : (
+                  <Link href="/verify" className={cn(buttonVariants(), "gap-2")}>
+                    <ShieldCheck className="size-4" />
+                    Go to Verification
+                  </Link>
+                )
               }
             />
           )}

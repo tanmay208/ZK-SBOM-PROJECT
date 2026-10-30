@@ -1,14 +1,14 @@
 # Project Roadmap: Zero-Knowledge Verification for Software Supply Chain Security
 
-**Document Version:** 3.0.0-final  
-**Effective Date:** 25 October 2026  
-**Workspace:** `E:\Main Project`  
-**Project Type:** Engineering Student Major Project  
-**Authoritative Status:** Official Locked Roadmap V3  
-**Superseded Roadmap:** Locked Master Roadmap V1/V2 (Stages A–F and Operational Viva Stage G)  
-**Requirements Source:** `Project_Stagewise_Report_A_to_G_and_Stage_D_Pending.pdf` (pages 11–12; source PDF noted as not locally present in workspace; scope established from report context)  
-**Historical Operational Baseline:** Stages A through F and earlier Stage G0–G4 operational work are formally closed and preserved as reusable evidence.  
-**Active Phase:** Final Submission Preparation, Context Synchronization & Packaging Verification (Stages G0–G6 closed 2026-10-25 with G6 PASS; Follow-On Stage D Reassessment closed 2026-10-26 with STAGE D PASS).  
+**Document Version:** 3.0.0-final
+**Effective Date:** 30 October 2026
+**Workspace:** `E:\Main Project`
+**Project Type:** Engineering Student Major Project
+**Authoritative Status:** Official Locked Roadmap V3
+**Superseded Roadmap:** Locked Master Roadmap V1/V2 (Stages A–F and Operational Viva Stage G)
+**Requirements Source:** `Project_Stagewise_Report_A_to_G_and_Stage_D_Pending.pdf` (pages 11–12; source PDF noted as not locally present in workspace; scope established from report context)
+**Historical Operational Baseline:** Stages A through F and earlier Stage G0–G4 operational work are formally closed and preserved as reusable evidence.
+**Active Phase:** Master Prompt 6 — Authoritative Project Context Documentation Synchronization (Master Prompts 1–5 closed with PASS on 2026-10-30; 161 security/crypto tests passed with 0 skips; expo demonstration workflow verified).
 
 ---
 
@@ -55,32 +55,24 @@ The verifier learns **only that the claim is true** ($\text{True} / \text{False}
 ```
 
 ### 1.3 System Roles and Responsibilities
-The platform enforces strict Role-Based Access Control (RBAC) and Separation of Duties. The agreed product role model comprises five roles:
+The platform enforces strict Role-Based Access Control (RBAC) and Separation of Duties under the **Authoritative 3-Role Model** established in Stage G and refined through Master Prompts 1–5:
 
 1. **Software Vendor (`vendor`)**:
    - Manages authorized applications within an isolated tenant namespace (`(name, vendor, user_id)` unique scope).
    - Uploads private CycloneDX SBOMs via encrypted intake endpoints.
    - Triggers zero-knowledge proof generation jobs for their applications.
-   - Obtains and distributes public verification certificates and cryptographic commitments to buyers.
+   - Manages proof verification shares (`verification.proof_shares`), granting reference tokens to buyers with single-active-token enforcement and automatic revocation.
 2. **Buyer / External Verifier (`buyer`)**:
-   - Planned dedicated consumer role for enterprise and institutional purchasers.
-   - Receives verification evidence and independently verifies zk-SNARK proofs and signed compliance certificates.
-   - Validates proof commitments ($R_{\text{SBOM}}$, $R_{\text{VulnDB}}$, $H_{\text{Policy}}$) without accessing private component data or internal vendor application structures.
-3. **Third-Party Auditor (`auditor`)**:
-   - Accesses authorized verification evidence, compliance records, and public audit trails in a read-oriented workflow.
-   - Self-registration default role in the current baseline implementation.
-   - Validates issued compliance certificates online via certificate ID or token fingerprint.
-4. **Security Administrator (`admin`)**:
-   - Manages authoritative security policies (e.g., maximum permissible CVSS threshold).
-   - Reviews and formally approves (`approved`) or freezes (`frozen`) vulnerability database snapshots.
-   - Revokes compromised compliance certificates with auditable timestamps and reasons.
-   - Manages user accounts, privileges, and role promotions.
-5. **Vulnerability Intelligence Ingestion (`trusted_importer`)**:
-   - Automated ingestion service or designated security team ingestion role with separation of duties.
-   - Seeds CVE records and computes Sparse Merkle Tree (SMT) commitments.
-   - Enforces two-person integrity: creates snapshots strictly in `pending` status, requiring an `admin` to approve or freeze them.
+   - Default self-registration role for enterprise procurement and verifiers.
+   - Receives authorized proof-share reference tokens and independently verifies zk-SNARK proofs and public commitments ($R_{\text{SBOM}}$, $R_{\text{VulnDB}}$, $H_{\text{Policy}}$).
+   - Inspects cryptographically minted compliance certificates without accessing private component data or internal vendor application structures.
+3. **Security Administrator (`admin`)**:
+   - Platform governance authority; does not perform routine vendor proof generation or buyer verification.
+   - Manages authoritative security policies ($H_{\text{Policy}}$ threshold and V2 contract digest).
+   - Reviews and formally approves (`approved`) or freezes (`frozen`) vulnerability database snapshots under Two-Person Integrity.
+   - Governs users, activation states, certificate lifecycles, and platform telemetry.
 
-*Implementation Evidence Note:* In the current codebase, `role` is stored as `String(50)` on `User` defaulting to `'auditor'`, with server-side checks actively enforcing `'vendor'`, `'admin'`, and `'trusted_importer'`. The dedicated `'buyer'` role and explicit account status/activation lifecycle are planned for Stage D (D2/D3).
+*Note: Legacy roles (`auditor` and `trusted_importer`) are formally decommissioned from active assignment, registration, filters, and UI workflows. Historical database constraints and migrations 001–016 remain preserved intact.*
 
 ### 1.4 Architecture & Subsystem Separation
 The system is divided into clear functional layers to prevent data leakage and ensure modular reproducibility:
@@ -704,7 +696,13 @@ Tasks throughout the roadmap are classified according to five explicit statuses:
 | **`G5`** | Cross-Role Regression | `PASS` | 348 automated tests passed (250 backend + 98 frontend, 0 skips, 0 failures), clean build 19 routes | Complete |
 | **`G6`** | Independent Closure | `PASS` | Formally closed 2026-10-25 03:48 IST (`G6_INDEPENDENT_CLOSURE_REPORT.md`); 10/10 criteria pass | Stage G Closed |
 | **`D_REASSESS`** | Stage D Follow-On Reassessment | `PASS` | Formally audited and signed off 2026-10-26 02:45 IST (`final_audit_report.md`); 256/256 proofs verified in 531.826s; active Certificate `81d1a4f0-...` minted | Stage D Reassessment Closed |
-| **`FINAL_SUBMISSION`** | Context Sync, Source ZIP Refresh & Safe Cleanup | `ACTIVE / IN PROGRESS` | Canonical context synchronization, dist/zkp-sbom-source.zip refresh, safe Class A cache cleanup, independent validation | Current Phase |
+| **`MP1`** | Initial Security Audit | `PASS` | Identified SMT vacuous proof risks, ecosystem coverage gaps, and snapshot governance limitations | Complete |
+| **`MP2`** | Vulnerability Intelligence Remediation | `PASS` | Live OSV and NVD 2.0 adapters, advisory normalization, SemVer & PEP 440 matcher, provenance | Complete |
+| **`MP3`** | Security Policy Hardening | `PASS` | Canonical policy contract, V1 circuit hash, V2 domain-separated digest, revision tracking | Complete |
+| **`MP3A_3B`**| Verification Gateway Hardening | `PASS` | Exact snapshot identity resolution, fail-closed provenance validation, TOCTOU defense | Complete |
+| **`MP4`** | End-to-End Acceptance | `PASS (CONDITIONAL)`| 442 passing tests; Barretenberg validation; vulnerable & clean fixtures verified | Complete |
+| **`MP5`** | Release Readiness & Soundness Reconciliation | `PASS (EXPO-READY)`| 161 dedicated tests pass (0 skips); 10 adversarial conditions reconciled; runbook verified | Complete |
+| **`MP6`** | Context Documentation Synchronization | `ACTIVE / IN PROGRESS`| Synchronizing authoritative context, repository state, and verified boundaries | Current Milestone |
 
 ---
 

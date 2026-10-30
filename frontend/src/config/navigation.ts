@@ -61,14 +61,14 @@ export const NAVIGATION_CONFIG: NavItem[] = [
     name: "ZKP Workspace",
     href: "/proofs",
     icon: Zap,
-    allowedRoles: ["vendor", "admin"],
+    allowedRoles: ["vendor"],
     section: "Zero-Knowledge",
   },
   {
     name: "Proof Verification",
     href: "/verify",
     icon: CheckCircle2,
-    allowedRoles: ["vendor", "admin", "buyer"],
+    allowedRoles: ["vendor", "buyer"],
     section: "Zero-Knowledge",
   },
   {

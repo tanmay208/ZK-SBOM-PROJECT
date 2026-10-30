@@ -1,17 +1,17 @@
 # Master Project Context: Zero-Knowledge SBOM Verification
 
-**Workspace:** [E:\Main Project](file:///E:/Main%20Project)  
-**Authoritative Documentation Root:** [MASTER_PROJECT_CONTEXT/](file:///E:/Main%20Project/MASTER_PROJECT_CONTEXT)  
-**Project:** Zero-Knowledge Verification for Software Supply Chain Security  
-**Operating Mode:** LOCAL-ONLY (No remote operations or deployments without explicit authorization; Gate 5R strictly blocked)  
-**Effective Date:** 27 October 2026
+**Workspace:** [E:\Main Project](file:///E:/Main%20Project)
+**Authoritative Documentation Root:** [MASTER_PROJECT_CONTEXT/](file:///E:/Main%20Project/MASTER_PROJECT_CONTEXT)
+**Project:** Zero-Knowledge Verification for Software Supply Chain Security
+**Operating Mode:** LOCAL-ONLY (No remote operations or deployments without explicit authorization; Gate 5R strictly blocked)
+**Effective Date:** 30 October 2026
 
 ---
 
 ## 1. Single Authoritative Context Root
 
 This directory (`MASTER_PROJECT_CONTEXT/`) is the **single canonical navigation point and authoritative source of truth** for the entire project. It eliminates conflicting, fragmented, or stale documentation by centralizing:
-- The locked six-stage project roadmap ($A \to B \to C \to D \to E \to F$).
+- The locked project roadmap ($A \to B \to C \to D \to E \to F \to G$ and Master Prompts 1–6).
 - Verified environment metrics, runtime coordinates, and live demonstration fixtures.
 - Formal architectural decision records (ADRs) and owner acceptance milestones.
 - Operational safety, RBAC, and cryptographic invariant rules for AI coding agents.

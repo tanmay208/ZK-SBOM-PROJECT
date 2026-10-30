@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
@@ -11,6 +11,9 @@ from verification_service.app.schemas.verification_schemas import (
     VerificationResponse,
     VerificationCertificateResponse,
     RevokeCertificateRequest,
+    CreateProofShareRequest,
+    ProofShareResponse,
+    DeleteProofShareResponse,
 )
 from verification_service.app.services.verification_service import VerificationService
 from shared.auth import get_current_user
@@ -54,6 +57,11 @@ async def verify_proof(
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
+    if current_user.role == "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin role is restricted to governance and oversight; routine proof verification submission is not permitted",
+        )
     """
     Submit a proof artifact and its corresponding public commitments for verification.
     Accepts both application/json (legacy) and multipart/form-data.
@@ -134,17 +142,27 @@ def list_certificates(
     current_user: User = Depends(get_current_user),
 ):
     from verification_service.app.models.verification_models import VerificationRequest
-    
-    certs = (
+    from zkp_service.app.models.zkp_models import ProofJob
+
+    query = (
         db.query(VerificationCertificate)
         .join(VerificationRequest, VerificationRequest.id == VerificationCertificate.verification_request_id)
-        .filter(VerificationRequest.user_id == current_user.id)
-        .order_by(VerificationCertificate.issued_at.desc())
+    )
+    if current_user.role == "admin":
+        pass
+    elif current_user.role == "vendor":
+        query = query.outerjoin(ProofJob, ProofJob.id == VerificationRequest.proof_job_id).filter(
+            (VerificationRequest.user_id == current_user.id) | (ProofJob.user_id == current_user.id)
+        )
+    else:  # buyer
+        query = query.filter(VerificationRequest.user_id == current_user.id)
+
+    return (
+        query.order_by(VerificationCertificate.issued_at.desc())
         .offset(skip)
         .limit(limit)
         .all()
     )
-    return certs
 
 @router.get("/certificates/{certificate_id}", response_model=VerificationCertificateResponse)
 def get_certificate(
@@ -157,7 +175,7 @@ def get_certificate(
     Enforces IDOR protection by checking owner.
     """
     service = VerificationService(db)
-    cert = service.get_certificate(certificate_id, user_id=current_user.id)
+    cert = service.get_certificate(certificate_id, user_id=current_user.id, user_role=current_user.role)
     if not cert:
         raise HTTPException(status_code=404, detail="Certificate not found")
     
@@ -232,4 +250,140 @@ def validate_certificate_token(
     """
     service = VerificationService(db)
     return service.validate_certificate_token(request.token)
+
+# -----------------------------------------------------------------------------
+# Proof Sharing Endpoints (Vendor-to-Buyer Verification)
+# -----------------------------------------------------------------------------
+
+@router.post("/shares", response_model=ProofShareResponse, status_code=201)
+def create_proof_share(
+    request: CreateProofShareRequest,
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Create an authorization share allowing buyers to independently verify a completed proof.
+    Restricted to vendors (for their own completed proofs) and administrators.
+    """
+    if current_user.role != "vendor":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Role '{current_user.role}' is not authorized to create verification shares. Only vendors may create shares for their completed proof jobs.",
+        )
+
+    service = VerificationService(db)
+    try:
+        share = service.create_share(
+            proof_job_id=request.proof_job_id,
+            vendor_id=current_user.id,
+            user_role=current_user.role,
+            recipient_role=request.recipient_role,
+            recipient_user_id=request.recipient_user_id,
+            expires_in_hours=request.expires_in_hours,
+        )
+        return share
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/shares", response_model=List[ProofShareResponse])
+def list_proof_shares(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    List verification shares accessible to the caller.
+    - Vendor: shares created by vendor.
+    - Buyer: active, non-revoked shares available to verify.
+    - Admin: all shares.
+    """
+    service = VerificationService(db)
+    return service.list_shares(
+        user_id=current_user.id,
+        user_role=current_user.role,
+        skip=skip,
+        limit=limit,
+    )
+
+
+@router.get("/shares/{share_token_or_id}", response_model=ProofShareResponse)
+def get_proof_share(
+    share_token_or_id: str,
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Retrieve public details and commitments of an authorized proof share.
+    """
+    service = VerificationService(db)
+    share = service.get_share(
+        share_token_or_id=share_token_or_id,
+        user_id=current_user.id,
+        user_role=current_user.role,
+    )
+    if not share:
+        raise HTTPException(status_code=404, detail="Proof share not found or unauthorized")
+    return share
+
+
+@router.post("/shares/{share_id}/revoke", response_model=ProofShareResponse)
+def revoke_proof_share(
+    share_id: UUID,
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Revoke an active verification share. Restricted to the creating vendor and administrators.
+    """
+    if current_user.role not in ("vendor", "admin"):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Role '{current_user.role}' is not authorized to revoke verification shares",
+        )
+
+    service = VerificationService(db)
+    share = service.revoke_share(
+        share_id=share_id,
+        user_id=current_user.id,
+        user_role=current_user.role,
+    )
+    if not share:
+        raise HTTPException(status_code=404, detail="Proof share not found or unauthorized")
+    return share
+
+@router.delete("/shares/{share_id}", response_model=DeleteProofShareResponse, status_code=200)
+def delete_proof_share(
+    share_id: UUID,
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Delete a revoked verification share.
+    Restricted to the creating vendor and administrators.
+    Enforces that only revoked shares may be deleted.
+    """
+    if current_user.role not in ("vendor", "admin"):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Role '{current_user.role}' is not authorized to delete verification shares",
+        )
+
+    service = VerificationService(db)
+    try:
+        result = service.delete_share(
+            share_id=share_id,
+            user_id=current_user.id,
+            user_role=current_user.role,
+        )
+        if not result:
+            raise HTTPException(status_code=404, detail="Proof share not found or unauthorized")
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 

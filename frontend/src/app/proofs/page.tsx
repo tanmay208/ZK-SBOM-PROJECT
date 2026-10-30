@@ -5,6 +5,7 @@ import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { proofService } from "@/api/services/proofService";
 import { RouteGuard } from "@/auth/RouteGuard";
+import { useAuth } from "@/auth/AuthProvider";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +35,9 @@ import {
 } from "lucide-react";
 
 function ProofList() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+
   const { data: proofs, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ["proofs"],
     queryFn: () => proofService.list(),
@@ -105,10 +109,12 @@ function ProofList() {
               <RotateCw className={cn("size-3.5", (isLoading || isFetching) && "animate-spin")} />
               <span>Refresh</span>
             </Button>
-            <Link href="/proofs/generate" className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}>
-              <Plus className="size-4" />
-              <span>Generate Proof</span>
-            </Link>
+            {!isAdmin && (
+              <Link href="/proofs/generate" className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}>
+                <Plus className="size-4" />
+                <span>Generate Proof</span>
+              </Link>
+            )}
           </div>
         }
       />
@@ -286,10 +292,12 @@ function ProofList() {
               title="No proof jobs found"
               description="You have not generated any zero-knowledge proofs yet. Select an uploaded SBOM to launch a proof job."
               action={
-                <Link href="/proofs/generate" className={cn(buttonVariants(), "gap-2")}>
-                  <Plus className="size-4" />
-                  Generate First Proof
-                </Link>
+                !isAdmin ? (
+                  <Link href="/proofs/generate" className={cn(buttonVariants(), "gap-2")}>
+                    <Plus className="size-4" />
+                    Generate First Proof
+                  </Link>
+                ) : undefined
               }
             />
           )}
@@ -407,7 +415,7 @@ function ProofList() {
 
 export default function ProofsPage() {
   return (
-    <RouteGuard allowedRoles={["vendor", "admin"]}>
+    <RouteGuard allowedRoles={["vendor"]}>
       <ProofList />
     </RouteGuard>
   );

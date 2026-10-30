@@ -2,8 +2,10 @@
 
 import * as React from "react";
 import { useState, use } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { proofService } from "@/api/services/proofService";
+import { verificationService } from "@/api/services/verificationService";
+import { ProofShareResponse } from "@/api/types";
 import { RouteGuard } from "@/auth/RouteGuard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -20,7 +22,6 @@ import { calculateProofEta } from "@/lib/etaCalculator";
 import {
   AlertCircle,
   AlertTriangle,
-  ArrowRight,
   Calendar,
   Check,
   CheckCircle2,
@@ -32,11 +33,70 @@ import {
   ServerOff,
   ShieldCheck,
   Timer,
-  XCircle
+  XCircle,
+  Share2,
+  KeyRound,
+  Trash2,
 } from "lucide-react";
 
 function ProofDetail({ id }: { id: string }) {
+  const queryClient = useQueryClient();
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [latestShare, setLatestShare] = useState<ProofShareResponse | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // Query shares for this proof job
+  const { data: allShares } = useQuery({
+    queryKey: ["proof-shares", id],
+    queryFn: () => verificationService.listShares(),
+  });
+
+  const jobShares = (allShares || []).filter((s) => s.proof_job_id === id);
+
+  const createShareMutation = useMutation({
+    mutationFn: async () => {
+      return verificationService.createShare({
+        proof_job_id: id,
+        recipient_role: "buyer",
+        expires_in_hours: 720,
+      });
+    },
+    onSuccess: (share) => {
+      setLatestShare(share);
+      queryClient.invalidateQueries({ queryKey: ["proof-shares", id] });
+      queryClient.invalidateQueries({ queryKey: ["verification-shares"] });
+    },
+  });
+
+  const deleteShareMutation = useMutation({
+    mutationFn: async (shareId: string) => {
+      setDeleteError(null);
+      return verificationService.deleteShare(shareId);
+    },
+    onSuccess: (_, deletedShareId) => {
+      if (latestShare && latestShare.id === deletedShareId) {
+        setLatestShare(null);
+      }
+      queryClient.invalidateQueries({ queryKey: ["proof-shares", id] });
+      queryClient.invalidateQueries({ queryKey: ["verification-shares"] });
+    },
+    onError: (err) => {
+      setDeleteError(err instanceof ApiError ? err.message : "Failed to delete revoked share");
+    },
+  });
+
+  const revokeShareMutation = useMutation({
+    mutationFn: async (shareId: string) => {
+      return verificationService.revokeShare(shareId);
+    },
+    onSuccess: (updatedShare) => {
+      if (latestShare && latestShare.id === updatedShare.id) {
+        setLatestShare(updatedShare);
+      }
+      queryClient.invalidateQueries({ queryKey: ["proof-shares", id] });
+      queryClient.invalidateQueries({ queryKey: ["verification-shares"] });
+    },
+  });
 
   const copyToClipboard = async (text: string, key: string) => {
     try {
@@ -435,27 +495,231 @@ function ProofDetail({ id }: { id: string }) {
         )}
       </Card>
 
+      {/* Vendor-to-Buyer Verification Sharing */}
+      {job.status === "completed" && (
+        <Card className="border-primary/30 shadow-xs">
+          <CardHeader className="border-b border-border/60 pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base font-semibold flex items-center gap-2">
+                <Share2 className="size-4 text-primary" />
+                Share Proof for Independent Verification
+              </CardTitle>
+              <Badge variant="outline" className="text-xs">
+                Zero-Knowledge Privacy
+              </Badge>
+            </div>
+            <CardDescription className="text-xs">
+              Grant procurement buyers authorization to independently verify this proof against public commitments without exposing your raw SBOM components.
+            </CardDescription>
+          </CardHeader>
+
+          <CardContent className="space-y-4 pt-4 text-xs">
+            {createShareMutation.error && (
+              <Alert variant="destructive">
+                <AlertCircle className="size-4" />
+                <AlertTitle>Failed to Create Share</AlertTitle>
+                <AlertDescription className="text-xs">
+                  {createShareMutation.error instanceof ApiError
+                    ? createShareMutation.error.message
+                    : createShareMutation.error.message || "Could not generate verification share."}
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {deleteError && (
+              <Alert variant="destructive">
+                <AlertCircle className="size-4" />
+                <AlertTitle>Failed to Delete Share</AlertTitle>
+                <AlertDescription className="text-xs">{deleteError}</AlertDescription>
+              </Alert>
+            )}
+
+            {latestShare && (
+              <Alert variant="success" className="border-emerald-500/30 bg-emerald-500/5">
+                <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-400" />
+                <AlertTitle className="text-xs font-semibold text-emerald-900 dark:text-emerald-200 flex items-center justify-between">
+                  <span>Newly Generated Verification Reference</span>
+                  <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
+                    Active
+                  </Badge>
+                </AlertTitle>
+                <AlertDescription className="space-y-2 mt-1">
+                  <p className="text-[11px] text-muted-foreground">
+                    Share this high-entropy reference token with your buyer for independent verification:
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="font-mono text-xs bg-background/80 p-2 rounded border border-border/40 select-all flex-1 break-all">
+                      {latestShare.share_token}
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => copyToClipboard(latestShare.share_token, "latestToken")}
+                    >
+                      {copiedKey === "latestToken" ? (
+                        <Check className="size-3 text-emerald-500 mr-1" />
+                      ) : (
+                        <Copy className="size-3 mr-1" />
+                      )}
+                      {copiedKey === "latestToken" ? "Copied" : "Copy Token"}
+                    </Button>
+                    {!latestShare.is_revoked && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="text-destructive hover:bg-destructive/10"
+                        onClick={() => revokeShareMutation.mutate(latestShare.id)}
+                        disabled={revokeShareMutation.isPending}
+                      >
+                        {revokeShareMutation.isPending && revokeShareMutation.variables === latestShare.id ? (
+                          <Loader2 className="size-3 animate-spin mr-1" />
+                        ) : null}
+                        Revoke
+                      </Button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 pt-1 text-[11px] text-muted-foreground">
+                    <span>Recipient: <strong>Role {latestShare.recipient_role}</strong></span>
+                    <span>Created: <strong>{formatToIST(latestShare.created_at, { includeSeconds: true })}</strong></span>
+                    {latestShare.expires_at && (
+                      <span>Expires: <strong>{formatToIST(latestShare.expires_at)}</strong></span>
+                    )}
+                  </div>
+                </AlertDescription>
+              </Alert>
+            )}
+
+            <div className="flex items-center justify-between">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => createShareMutation.mutate()}
+                disabled={createShareMutation.isPending}
+                className="gap-1.5"
+              >
+                {createShareMutation.isPending ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <KeyRound className="size-3.5" />
+                )}
+                <span>Generate Verification Reference Token</span>
+              </Button>
+
+              <span className="text-[11px] text-muted-foreground">
+                {jobShares.length} share{jobShares.length === 1 ? "" : "s"} ({jobShares.filter(s => !s.is_revoked).length} active, {jobShares.filter(s => s.is_revoked).length} revoked)
+              </span>
+            </div>
+
+            {/* Existing Shares Table */}
+            {jobShares.length > 0 && (
+              <div className="rounded-md border border-border/50 divide-y divide-border/40 mt-2">
+                {jobShares.map((share) => (
+                  <div key={share.id} className="p-3 flex items-center justify-between text-[11px] gap-2">
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-medium">{share.share_token}</span>
+                        <Badge variant={share.is_revoked ? "destructive" : "outline"} className="text-[10px]">
+                          {share.is_revoked ? "Revoked" : "Active"}
+                        </Badge>
+                      </div>
+                      <span className="text-muted-foreground text-[10px]">
+                        Recipient: Role {share.recipient_role} • Created: {formatToIST(share.created_at)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      {!share.is_revoked ? (
+                        <>
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="outline"
+                            onClick={() => copyToClipboard(share.share_token, `token-${share.id}`)}
+                          >
+                            {copiedKey === `token-${share.id}` ? (
+                              <Check className="size-3 text-emerald-500 mr-1" />
+                            ) : (
+                              <Copy className="size-3 mr-1" />
+                            )}
+                            {copiedKey === `token-${share.id}` ? "Copied" : "Copy Token"}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="outline"
+                            className="text-destructive hover:bg-destructive/10"
+                            onClick={() => revokeShareMutation.mutate(share.id)}
+                            disabled={revokeShareMutation.isPending}
+                          >
+                            {revokeShareMutation.isPending && revokeShareMutation.variables === share.id ? (
+                              <Loader2 className="size-3 animate-spin mr-1" />
+                            ) : null}
+                            Revoke
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          className="text-destructive hover:bg-destructive/10"
+                          onClick={() => {
+                            if (window.confirm("Are you sure you want to delete this revoked verification share? This will permanently remove the share token without affecting proof jobs or certificates.")) {
+                              deleteShareMutation.mutate(share.id);
+                            }
+                          }}
+                          disabled={deleteShareMutation.isPending}
+                        >
+                          {deleteShareMutation.isPending && deleteShareMutation.variables === share.id ? (
+                            <Loader2 className="size-3 animate-spin mr-1" />
+                          ) : (
+                            <Trash2 className="size-3 mr-1" />
+                          )}
+                          Delete
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Completion Next Steps (Distinguish Generation from Verification) */}
       {job.status === "completed" && (
         <Alert variant="success" className="border-emerald-500/30 bg-emerald-500/5">
           <ShieldCheck className="size-5 text-emerald-600 dark:text-emerald-400" />
           <AlertTitle className="text-sm font-semibold text-emerald-900 dark:text-emerald-200">
-            Cryptographic Proof Generated — Independent Verification Required
+            Cryptographic Proof Generated — Ready for Independent Verification
           </AlertTitle>
           <AlertDescription className="space-y-3 mt-1.5 text-xs text-muted-foreground leading-relaxed">
             <p>
               The Barretenberg prover has assembled the UltraPlonk proof (2,144 bytes). A generated proof is <strong>not automatically verified</strong> and does not constitute a tamper-evident certificate on its own.
             </p>
             <p>
-              Proceed to the Verification workflow to evaluate this proof against the verification smart contract and issue an authoritative verification certificate.
+              To enable independent buyers to verify this proof against public commitments without exposing private components, generate an authorized verification share below.
             </p>
-            <div>
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <Button
+                size="sm"
+                variant="default"
+                onClick={() => createShareMutation.mutate()}
+                disabled={createShareMutation.isPending}
+                className="gap-1.5"
+              >
+                {createShareMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Share2 className="size-3.5" />}
+                <span>Create Verification Share</span>
+              </Button>
               <Link
                 href={`/verify?proofId=${encodeURIComponent(job.id)}`}
-                className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}
+                className={cn(buttonVariants({ variant: "outline", size: "sm" }), "gap-1.5")}
               >
-                <span>Proceed to Verification</span>
-                <ArrowRight className="size-3.5" />
+                <ShieldCheck className="size-3.5 text-primary" />
+                <span>Verify Completed Proof</span>
               </Link>
             </div>
           </AlertDescription>
@@ -468,7 +732,7 @@ function ProofDetail({ id }: { id: string }) {
 export default function ProofDetailPage(props: { params: Promise<{ id: string }> }) {
   const params = use(props.params);
   return (
-    <RouteGuard allowedRoles={["vendor", "admin"]}>
+    <RouteGuard allowedRoles={["vendor"]}>
       <ProofDetail id={params.id} />
     </RouteGuard>
   );
