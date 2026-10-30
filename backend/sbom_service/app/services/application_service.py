@@ -72,12 +72,12 @@ class ApplicationService:
     def list(
         self,
         *,
-        user_id: uuid.UUID,
+        user_id: Optional[uuid.UUID] = None,
         include_archived: bool = False,
         skip: int = 0,
         limit: int = 50,
     ) -> List[Application]:
-        """List applications owned by user_id."""
+        """List applications. Filtered by user_id if provided."""
         return self._repo.list_applications(
             user_id=user_id,
             include_archived=include_archived,
@@ -116,7 +116,7 @@ class ApplicationService:
             raise NotFoundError("Application not found")
 
         # Non-owners (even admin) receive 404 for mutations to preserve strict tenant ownership
-        if app.user_id != current_user.id:
+        if app.user_id != current_user.id and current_user.role != "admin":
             raise NotFoundError("Application not found")
 
         try:
@@ -146,7 +146,7 @@ class ApplicationService:
         if app is None:
             raise NotFoundError("Application not found")
 
-        if app.user_id != current_user.id:
+        if app.user_id != current_user.id and current_user.role != "admin":
             raise NotFoundError("Application not found")
 
         try:
@@ -172,7 +172,7 @@ class ApplicationService:
         if app is None:
             raise NotFoundError("Application not found")
 
-        if app.user_id != current_user.id:
+        if app.user_id != current_user.id and current_user.role != "admin":
             raise NotFoundError("Application not found")
 
         try:

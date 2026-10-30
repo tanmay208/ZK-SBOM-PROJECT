@@ -76,7 +76,9 @@ test("Dashboard - Role-Aware Workflow Scoping", () => {
       workflows.push("/sboms/upload");
       workflows.push("/proofs/generate");
     }
-    workflows.push("/verify");
+    if (role === "buyer" || role === "admin") {
+      workflows.push("/verify");
+    }
     workflows.push("/certificates");
     workflows.push("/admin/policies");
     workflows.push("/admin/vulnerabilities");

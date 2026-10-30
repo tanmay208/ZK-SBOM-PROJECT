@@ -1,9 +1,9 @@
 # Application Security Rules & Invariants
 
-**Document Version:** 2.0.0-consolidated  
-**Workspace Root:** `E:\Main Project`  
-**Authoritative Location:** `project_context/SECURITY_RULES.md`  
-**Effective Date:** 14 October 2026  
+**Document Version:** 3.0.0-final-release-ready
+**Workspace Root:** `E:\Main Project`
+**Authoritative Location:** `project_context/SECURITY_RULES.md`
+**Effective Date:** 30 October 2026
 
 ---
 
@@ -114,3 +114,78 @@ Every security-sensitive pull request or code modification must include correspo
 4. **Oversized payload (> 10 MB)** $\rightarrow$ Assert `HTTP 413 Payload Too Large`.
 5. **Malformed commitment strings** $\rightarrow$ Assert `HTTP 422 Unprocessable Entity`.
 6. **Mismatched public inputs or tampered proofs** $\rightarrow$ Assert fail-closed verification rejection.
+
+
+
+
+---
+
+
+
+## 8. Cryptographic Trust Boundaries & Enforcement Limits
+
+
+
+1. **What the Zero-Knowledge Proof Proves**:
+
+   - The prover possesses a private SBOM $S$ whose component hashes form a valid binary Merkle tree root matching public commitment $R_{\text{SBOM}}$.
+
+   - For every component in $S$, its CVSS score satisfies $\text{score}_i \le \text{policy\_max\_cvss}$ relative to the SMT root $R_{\text{VulnDB}}$ and policy hash $H_{\text{Policy}}$.
+
+   - Non-membership proofs establish absence strictly within the specific mathematical tree committed by $R_{\text{VulnDB}}$.
+
+2. **What the Proof Does NOT Prove (Anti-Hallucination Boundaries)**:
+
+   - It does **not** prove the application is universally free from vulnerabilities, zero-days, or bugs.
+
+   - It does **not** prove vulnerability database completeness.
+
+   - The circuit does **not** parse or enforce package ecosystem strings (`npm`, `pypi`). Cross-ecosystem suitability is strictly **BACKEND-ENFORCED** by `SnapshotValidator`.
+
+   - V2 policy contract attributes (`policy_digest_v2`, excluded packages) are **BACKEND-ENFORCED** and **CERTIFICATE-RECORDED**, not constrained inside the frozen Noir circuit.
+
+3. **Certificate Integrity & Key Management**:
+
+   - Compliance certificates are issued as **HS256 JSON Web Tokens** (HMAC-SHA256).
+
+   - Verifying an HS256 certificate requires possession of the authority shared secret (`CERTIFICATE_SECRET_KEY`).
+
+   - HS256 does not provide asymmetric public-key non-repudiation.
+
+   - Key rotation is supported via multi-key mapping (`CERTIFICATE_SECRET_KEYS`) with backward-compatible verification of historical key IDs.
+
+
+
+---
+
+
+
+## 9. Proof Verification Share Lifecycle Rules
+
+
+
+1. **Separation of Duties**: Vendors generate proofs but cannot self-certify compliance; buyers independently verify proof jobs using authorized reference tokens.
+
+2. **Single Active Token Invariant**: Each proof job has at most one active share token at any given time. Generating a new share token automatically revokes previous tokens for that proof job.
+
+3. **Deletion Safeguards**:
+
+   - Active tokens **cannot** be deleted (HTTP 400 Bad Request).
+
+   - Revoked tokens can be deleted individually by the owning vendor or administrator.
+
+   - Deleting a share token preserves proof jobs, verification requests, and certificates.
+
+
+
+---
+
+
+
+## 10. TOCTOU Concurrency Re-validation Invariant
+
+
+
+1. **Atomic Pre-Signing Check**: Immediately prior to certificate signing and database persistence, `VerificationRepository` re-queries the authoritative database state of `ProofJob`, `VulnerabilitySnapshot`, and `SecurityPolicy`.
+
+2. **Fail-Closed Abort**: If the snapshot is revoked, expired, or if the policy is deactivated or mutated between verification request submission and certificate minting, the transaction aborts fail-closed (`result = "record_mismatch"`), and **zero certificates** are issued.

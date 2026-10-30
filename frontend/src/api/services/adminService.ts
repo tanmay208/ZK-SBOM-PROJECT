@@ -52,4 +52,15 @@ export const adminService = {
       data: payload,
     });
   },
+
+  deleteUser: async (
+    userId: string
+  ): Promise<{ id: string; username: string; deleted: boolean; message: string }> => {
+    return apiClient<{ id: string; username: string; deleted: boolean; message: string }>(
+      `/api/v1/admin/users/${userId}`,
+      {
+        method: "DELETE",
+      }
+    );
+  },
 };

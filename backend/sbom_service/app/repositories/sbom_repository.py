@@ -120,13 +120,15 @@ class SBOMRepository:
 
     def list_applications(
         self,
-        user_id: uuid.UUID,
+        user_id: Optional[uuid.UUID] = None,
         include_archived: bool = False,
         skip: int = 0,
         limit: int = 50,
     ) -> list[Application]:
-        """List applications owned by user_id, active-only by default."""
-        query = self._session.query(Application).filter(Application.user_id == user_id)
+        """List applications. Filtered by user_id if provided, active-only by default."""
+        query = self._session.query(Application)
+        if user_id is not None:
+            query = query.filter(Application.user_id == user_id)
         if not include_archived:
             query = query.filter(Application.is_active == True)
         return (

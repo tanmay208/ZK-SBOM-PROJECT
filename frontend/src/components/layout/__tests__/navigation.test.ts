@@ -25,11 +25,13 @@ test("Navigation Configuration roles are strictly enforced", () => {
   const proofsNav = NAVIGATION_CONFIG.find((n) => n.href === "/proofs");
   assert.ok(proofsNav, "ZKP Workspace must target an implemented page");
   assert.ok(!proofsNav.allowedRoles.includes("buyer"), "Buyer CANNOT see ZKP Proving Workspace");
+  assert.ok(!proofsNav.allowedRoles.includes("admin"), "Admin CANNOT see operational ZKP Workspace");
 
   const verifyNav = NAVIGATION_CONFIG.find((n) => n.href === "/verify");
   assert.ok(verifyNav, "Proof Verification nav item must exist");
   assert.ok(!(verifyNav.allowedRoles as string[]).includes("auditor"), "Auditor is removed from Proof Verification");
   assert.ok(verifyNav.allowedRoles.includes("vendor"), "Vendor can see Proof Verification");
+  assert.ok(!verifyNav.allowedRoles.includes("admin"), "Admin CANNOT see operational Proof Verification in navigation");
   assert.ok(verifyNav.allowedRoles.includes("buyer"), "Buyer can see Proof Verification");
   assert.ok(!(verifyNav.allowedRoles as string[]).includes("trusted_importer"), "trusted_importer CANNOT see Proof Verification");
 

@@ -1,11 +1,11 @@
 # Technical Stack, Runtime Environment & Architecture Specification
 
-**Project:** Zero-Knowledge Verification for Software Supply Chain Security  
-**Workspace Root:** `E:\Main Project`  
-**Authoritative Documentation Root:** [`MASTER_PROJECT_CONTEXT/`](MASTER_PROJECT_CONTEXT/)  
-**Roadmap Baseline:** [Official Locked Roadmap V3](MASTER_PROJECT_CONTEXT/project_context/PROJECT_ROADMAP.md)  
-**Effective Date:** 26 October 2026  
-**Document Status:** Canonical Technical Specification  
+**Project:** Zero-Knowledge Verification for Software Supply Chain Security
+**Workspace Root:** `E:\Main Project`
+**Authoritative Documentation Root:** [`MASTER_PROJECT_CONTEXT/`](MASTER_PROJECT_CONTEXT/)
+**Roadmap Baseline:** [Official Locked Roadmap V3](MASTER_PROJECT_CONTEXT/project_context/PROJECT_ROADMAP.md)
+**Effective Date:** 30 October 2026
+**Document Status:** Canonical Technical Specification
 
 
 ---
@@ -42,7 +42,7 @@ A buyer or third-party auditor independently verifies the zero-knowledge proof a
 | **Data Validation** | Pydantic | `2.10.4` | Request/response schema validation | Direct Runtime | [`backend/shared/requirements.txt`](backend/shared/requirements.txt) |
 | **Database ORM** | SQLAlchemy | `2.0.36` | Relational object modeling & query builder | Direct Runtime | [`backend/shared/requirements.txt`](backend/shared/requirements.txt) |
 | **Database Driver** | psycopg2-binary | `2.9.10` | PostgreSQL database connection driver | Direct Runtime | [`backend/shared/requirements.txt`](backend/shared/requirements.txt) |
-| **Database Engine** | PostgreSQL | `17.x` | Relational data persistence & tenant isolation | Infrastructure | [`docker-compose.local.yml`](docker-compose.local.yml) |
+| **Database Engine** | PostgreSQL | `16.x / 17.x` | Relational data persistence (Port 5433 Dev, Port 5435 Test) & tenant isolation | Infrastructure | [`docker-compose.local.yml`](docker-compose.local.yml) |
 | **Database Migrations** | Alembic | `1.14.1` | Linear schema migrations (001 to 016) | Direct Runtime | [`backend/alembic/env.py`](backend/alembic/env.py) |
 | **Password Hashing** | bcrypt | `5.0.0` | Cryptographic password hashing for user accounts | Direct Runtime | [`backend/shared/requirements.txt`](backend/shared/requirements.txt) |
 | **Token Authentication** | PyJWT | `2.12.1` | HMAC-SHA256 JWT bearer token creation & validation | Direct Runtime | [`backend/shared/requirements.txt`](backend/shared/requirements.txt) |

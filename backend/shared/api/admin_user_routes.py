@@ -79,6 +79,13 @@ class UserStatusUpdateRequest(BaseModel):
     is_active: bool = Field(..., description="Target account activation status")
 
 
+class UserDeleteResponse(BaseModel):
+    id: UUID
+    username: str
+    deleted: bool = True
+    message: str = "User account successfully deleted"
+
+
 @router.get("", response_model=List[AdminUserResponse])
 def list_users(
     skip: int = Query(default=0, ge=0),
@@ -334,3 +341,106 @@ def update_user_status(
             outcome="success",
         )
         return target_user
+
+
+
+@router.delete("/{user_id}", response_model=UserDeleteResponse, status_code=status.HTTP_200_OK)
+def delete_user(
+    user_id: UUID,
+    db: Session = Depends(get_session),
+    current_admin: User = Depends(require_roles("admin")),
+):
+    """
+    Permanently delete a vendor or buyer user account.
+    Enforces admin account protection, self-deletion prevention, and session invalidation.
+    """
+    with admin_lifecycle_lock(db):
+        target_user = db.query(User).filter(User.id == user_id).first()
+        if not target_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+
+        # Invariant 1: Self-deletion guard
+        if target_user.id == current_admin.id:
+            audit_log(
+                "admin_service",
+                "user_delete",
+                f"Self-deletion rejected for administrator {user_id}",
+                actor_id=str(current_admin.id),
+                resource_type="user",
+                resource_id=str(user_id),
+                outcome="denied",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Administrators cannot delete their own account",
+            )
+
+        # Invariant 2: Admin account protection
+        if target_user.role == "admin":
+            audit_log(
+                "admin_service",
+                "user_delete",
+                f"Deletion rejected for administrator account {user_id}",
+                actor_id=str(current_admin.id),
+                resource_type="user",
+                resource_id=str(user_id),
+                outcome="denied",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Administrator accounts cannot be deleted",
+            )
+
+        # Invariant 3: Only vendor and buyer roles can be deleted
+        if target_user.role not in ("vendor", "buyer"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot delete user with role '{target_user.role}'",
+            )
+
+        target_username = target_user.username
+        target_role = target_user.role
+
+        # If target is vendor, revoke any active shares for their jobs
+        try:
+            from verification_service.app.models.verification_models import ProofShare
+            from datetime import timezone
+            active_shares = (
+                db.query(ProofShare)
+                .filter(ProofShare.vendor_id == target_user.id, ProofShare.is_revoked == False)
+                .all()
+            )
+            for share in active_shares:
+                share.is_revoked = True
+                share.revoked_at = datetime.now(timezone.utc)
+        except Exception:
+            pass
+
+        # Invalidate sessions via updated_at and is_active before deletion
+        target_user.is_active = False
+        target_user.updated_at = datetime.utcnow()
+        db.flush()
+
+        # Delete the user row
+        db.delete(target_user)
+        db.commit()
+
+        audit_log(
+            "admin_service",
+            "user_delete",
+            f"User {user_id} ({target_username}, role={target_role}) permanently deleted by admin {current_admin.id}",
+            actor_id=str(current_admin.id),
+            resource_type="user",
+            resource_id=str(user_id),
+            outcome="success",
+        )
+
+        return UserDeleteResponse(
+            id=user_id,
+            username=target_username,
+            deleted=True,
+            message=f"User account '{target_username}' successfully deleted",
+        )

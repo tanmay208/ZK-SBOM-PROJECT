@@ -1,10 +1,10 @@
 # System Architecture, Data Flow, Schema & Technical Reference
 
-**Document Version:** 3.0.0-final-stage-f3  
-**Workspace Root:** `E:\Main Project`  
-**Authoritative Location:** `project_context/ARCHITECTURE.md`  
-**Effective Date:** 22 October 2026  
-**Status:** Authoritative Technical Reference (Stage F3 Complete)  
+**Document Version:** 4.0.0-final-release-ready
+**Workspace Root:** `E:\Main Project`
+**Authoritative Location:** `project_context/ARCHITECTURE.md`
+**Effective Date:** 30 October 2026
+**Status:** Authoritative Technical Reference (Stage F3 Complete)
 
 ---
 
@@ -26,7 +26,7 @@ graph TB
 
     subgraph BackendLayer["Unified FastAPI Application (Port 8000)"]
         CoreRouter["FastAPI Application Factory<br/>Unified Router Mount"]
-        
+
         AuthSvc["Auth & User Management<br/>/api/v1/auth & /api/v1/admin/users<br/>Bcrypt / JWT / 3-Role RBAC"]
         SBOM["SBOM Intake & Application Service<br/>/api/v1/sbom & /api/v1/applications<br/>CycloneDX Parser / Binary Merkle Tree"]
         PolicySvc["Security Policy Service<br/>/api/v1/policy<br/>CVSS Thresholds / Poseidon Hash"]
@@ -48,7 +48,7 @@ graph TB
 
     Browser -->|HTTP / JSON / Multipart| Nginx
     Nginx -->|Proxied Requests| CoreRouter
-    
+
     CoreRouter --> AuthSvc
     CoreRouter --> SBOM
     CoreRouter --> PolicySvc
@@ -218,11 +218,11 @@ To guarantee mathematical confidentiality and compliance with privacy objectives
 
 ### 4.1 Segment Public Input Ordering
 To prevent input permutation or commitment swapping attacks, public inputs are strictly bound in canonical order:
-1. **`segment_init_32`** (5 public inputs / 2304 bytes total proof):  
+1. **`segment_init_32`** (5 public inputs / 2304 bytes total proof):
    `[global_sbom_root, policy_hash, chunk_index, components_commit, hash_out_commit]`
-2. **`segment_mid_32`** (4 public inputs / 2272 bytes total proof):  
+2. **`segment_mid_32`** (4 public inputs / 2272 bytes total proof):
    `[segment_index, components_commit, hash_in_commit, hash_out_commit]`
-3. **`segment_final_32`** (3 public inputs / 2240 bytes total proof):  
+3. **`segment_final_32`** (3 public inputs / 2240 bytes total proof):
    `[vulnerability_db_root, components_commit, hash_in_commit]`
 
 ---
@@ -242,9 +242,9 @@ erDiagram
 
     applications ||--o{ sbom_uploads : "contains (application_id)"
     sbom_uploads ||--o{ components : "has (sbom_upload_id)"
-    
+
     vulnerability_snapshots ||--o{ component_vulnerability_mappings : "contains (snapshot_id)"
-    
+
     sbom_uploads ||--o{ proof_jobs : "evaluated in (sbom_upload_id)"
     vulnerability_snapshots ||--o{ proof_jobs : "evaluated against (snapshot_id)"
     security_policies ||--o{ proof_jobs : "governed by (policy_id)"
@@ -533,3 +533,108 @@ In accordance with formal project owner decisions recorded on 22 October 2026, t
 2. **Live D9 Acceptance Step 5 (`RECOMMENDED CONDITIONAL ACCEPTANCE`):** During live intake testing against shared PostgreSQL 16 on port 5433, Step 5 (`POST /api/v1/policy`) was safely skipped by the test harness to preserve the shared baseline policy activation state (8/9 checks passed). Live policy creation was separately verified via a dedicated isolated container on port 5434 (14/14 checks passed, confirming admin RBAC, Poseidon hash equivalence, single-active-policy invariant, and transactional advisory locking).
 3. **Automated Vulnerability Snapshot TTL (`RECOMMENDED CONDITIONAL ACCEPTANCE`):** Implemented in source under seven locked architectural decisions (D7-POL-01..07) with 30-day default TTL (range 1h–365d) anchored to freeze timestamps and evaluated synchronously across 3 service checkpoints. Verified across 37 deterministic matrix tests and live isolated migration 016 on port 5434. The local development database on port 5433 remains at revision 015 pending authorized execution of `run_pg16_migration_016.py`, and inclusion of migration 016 in `dist/zkp-sbom-source.zip` remains an open scope decision.
 
+
+
+
+
+### 2.8 Vulnerability Intelligence Pipeline & Adapters (`backend/vulnerability_service/`)
+
+- **Upstream Feed Adapters**:
+
+  - `OSVAdapter`: Connects live to Google OSV API (`https://api.osv.dev/v1/query`) for npm advisories.
+
+  - `NVDAdapter`: Connects live to NIST NVD 2.0 API (`https://services.nvd.nist.gov/rest/json/cves/2.0`) for CVE records.
+
+  - Fail-closed upstream error handling: rate limits, timeouts, and malformed responses abort ingestion without mutating existing frozen snapshots.
+
+- **Package Normalization & Ecosystem Matching**:
+
+  - `NormalizationService`: Normalizes npm package names (including `@scope/name` scoped packages) and PyPI package names (PEP 503 lowercase and delimiter collapsing).
+
+  - `EcosystemVulnerabilityMatcher`: Executes deterministic version matching using `semver` (npm) and `packaging.version` (PEP 440 for PyPI). Evaluates `introduced`, `fixed`, `last_affected`, and `unknown` bounds.
+
+  - Unscannable handling: Components missing versions or declaring unsupported ecosystems (`cargo`, `golang`, `maven`) are flagged as `UNSCANNABLE` / `UNSUPPORTED_ECOSYSTEM`, causing evaluation to fail closed.
+
+- **Snapshot Governance & Provenance**:
+
+  - `SnapshotValidator`: Enforces that every snapshot has valid, parseable JSON provenance declaring `ecosystems_covered`.
+
+  - Re-verifies that stored `authoritative_smt_root` mathematically matches the Sparse Merkle Tree root over all stored mappings.
+
+  - Enforces Two-Person Integrity (`creator != approver != freezer`).
+
+
+
+### 2.9 Security Policy Contract & Dual Digest Architecture (`backend/policy_service/`)
+
+- **Canonical Policy Contract (`PolicyContract`)**:
+
+  - Encapsulates policy parameters: `policy_id`, `revision`, `name`, `max_allowed_cvss`, `severity_limits`, `excluded_packages`.
+
+- **Dual Commitment Architecture**:
+
+  - *V1 Circuit Hash ($H_{\text{Policy}}$)*: Poseidon hash over `max_allowed_cvss_int` ($t=2$ sponge). Constrained inside frozen Noir circuit `segment_init_32`.
+
+  - *V2 Contract Digest (`policy_digest_v2`)*: Domain-separated SHA-256 hash over canonical JSON contract string (`"ZK_SBOM_POLICY_V2:..."`). Bound inside issued certificate JWT payload.
+
+- **Single Active Policy Invariant**:
+
+  - Activating a policy revision atomically deactivates all other policies in a single database transaction.
+
+
+
+### 2.10 Verification Share Subsystem (`backend/verification_service/`)
+
+- **Proof Sharing Lifecycle (`verification.proof_shares`)**:
+
+  - Solves separation of duties: Vendors own proof jobs and generate authorized reference tokens (`share_token`) for procurement buyers.
+
+  - **Single Active Token Invariant**: Each completed proof job has at most one active share token at a time. Generating a new token automatically revokes previous tokens for that job.
+
+  - **Lifecycle Deletion Rules**: Revoked tokens can be deleted individually; active tokens cannot be deleted. Deleting a share preserves proof jobs, requests, and certificates.
+
+  - **Buyer Verification**: Buyers verify proof artifacts using the active share token without accessing vendor private data.
+
+
+
+### 2.11 Verification Gateway Hardening & Concurrency Protection
+
+- **Exact Snapshot Resolution**: Resolves snapshots using exact `ProofJob.snapshot_id` and verifies that the snapshot's authoritative SMT root strictly matches public input $R_{\text{VulnDB}}$ (`AUD-3A-005`).
+
+- **Ecosystem Suitability Check**: Compares target SBOM ecosystems against snapshot declared coverage; rejects cross-ecosystem proofs fail-closed with `BLOCKED_INSUFFICIENT_COVERAGE` (`AUD-3A-006`).
+
+- **TOCTOU Pre-Signing Re-Validation**: Re-queries `ProofJob`, `VulnerabilitySnapshot`, and `SecurityPolicy` within the active transaction immediately prior to certificate signing and persistence. Snapshot revocation, expiration, or policy deactivation aborts issuance fail-closed (`result = "record_mismatch"`).
+
+- **Atomic Rollback**: Database write errors during certificate minting cleanly roll back the transaction, leaving zero invalid or orphaned certificates.
+
+
+
+---
+
+
+
+## 4. Cryptographic Enforcement Boundaries Matrix
+
+
+
+| Security Property | Enforcement Boundary | Implementation Mechanism |
+
+| :--- | :--- | :--- |
+
+| SMT Membership & Non-Membership | **CIRCUIT-ENFORCED** | Poseidon sponge ($t=2, t=3$) 256-level traversal in `segment_final_32` against $R_{\text{VulnDB}}$. |
+
+| Merkle Tree Inclusion (1024 slots) | **CIRCUIT-ENFORCED** | 10-level binary Merkle verification in `segment_init_32` against $R_{\text{SBOM}}$. |
+
+| CVSS Policy Threshold ($H_{\text{Policy}}$) | **CIRCUIT-ENFORCED** | In-circuit constraint `assert(scores[i] <= policy_max_cvss)` in `segment_init_32`. |
+
+| Cross-Ecosystem Protection | **BACKEND-ENFORCED** | `SnapshotValidator.validate_snapshot_suitability_for_sbom` compares SBOM ecosystems against snapshot provenance. |
+
+| V2 Policy Contract Digest | **BACKEND-ENFORCED** & **CERTIFICATE-RECORDED** | `policy_digest_v2` and `policy_revision` bound in signed certificate JWT payload. |
+
+| Snapshot Freshness & Expiry | **BACKEND-ENFORCED** | Synchronous TTL validation `now_utc >= expires_at` at proving and verification preflight. |
+
+| Snapshot Revocation | **BACKEND-ENFORCED** | TOCTOU check `snapshot.revoked_at IS NOT NULL` before certificate signing. |
+
+| Certificate Authenticity | **BACKEND-ENFORCED** | HS256 JWT signature using configured authority secret (`CERTIFICATE_SECRET_KEY`). |
+
+| Public Non-Repudiation | **NOT ENFORCED** | HS256 is a symmetric MAC; verifiers must hold the authority secret. Asymmetric digital signatures deferred. |

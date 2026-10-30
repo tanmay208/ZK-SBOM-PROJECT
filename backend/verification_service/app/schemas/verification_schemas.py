@@ -17,6 +17,7 @@ class VerifyProofRequest(BaseModel):
     policy_hash: str = Field(..., min_length=2, max_length=128, description="The authoritative Policy hash")
     proof_job_id: UUID4 | None = Field(None, description="The ID of the ProofJob containing the 256 chunk proofs")
     proof_artifact: str | None = Field(None, max_length=10_000_000, description="Optional legacy string proof artifact from frontend payload")
+    share_token: str | None = Field(None, max_length=64, description="Optional verification reference / share token")
 
     @field_validator("sbom_root", "vulnerability_db_root", "policy_hash")
     @classmethod
@@ -85,7 +86,7 @@ class VerificationResponse(BaseModel):
     result: str | None = None
     verified_at: datetime | None = None
     created_at: datetime
-    
+
     certificate: VerificationCertificateResponse | None = None
 
     model_config = ConfigDict(from_attributes=True)
@@ -97,3 +98,48 @@ class RevokeCertificateRequest(BaseModel):
     """
     reason: str | None = Field(None, max_length=255, description="Reason for revocation")
 
+
+class CreateProofShareRequest(BaseModel):
+    """
+    Vendor-initiated request to share a completed proof job for verification.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    proof_job_id: UUID4 = Field(..., description="The ID of the completed ProofJob to share")
+    recipient_role: str = Field("buyer", pattern="^(buyer|vendor|admin)$", description="Role permitted to use this share")
+    recipient_user_id: UUID4 | None = Field(None, description="Optional specific recipient user ID")
+    expires_in_hours: int | None = Field(None, ge=1, le=8760, description="Optional expiration window in hours")
+
+
+class ProofShareResponse(BaseModel):
+    """
+    Public representation of a verification share.
+    Only exposes public commitments and authorization metadata.
+    Never exposes raw SBOM components, private dependencies, or internal paths.
+    """
+    id: UUID4
+    proof_job_id: UUID4
+    vendor_id: UUID4
+    share_token: str
+    recipient_role: str
+    recipient_user_id: UUID4 | None = None
+    is_revoked: bool = False
+    revoked_at: datetime | None = None
+    expires_at: datetime | None = None
+    created_at: datetime
+    is_active: bool = True
+    # Public commitments for convenience of the buyer
+    sbom_root: str | None = None
+    vulnerability_db_root: str | None = None
+    policy_hash: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DeleteProofShareResponse(BaseModel):
+    """
+    Response acknowledging deletion of a revoked verification share.
+    """
+    status: str = "deleted"
+    id: UUID4
+    message: str = "Revoked proof share successfully deleted"

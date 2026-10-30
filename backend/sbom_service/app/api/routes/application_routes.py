@@ -17,7 +17,7 @@ import logging
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from shared.database import get_session
@@ -46,7 +46,7 @@ router = APIRouter(prefix="/api/v1/applications", tags=["applications"])
 def create_application(
     request: ApplicationCreateRequest,
     session: Session = Depends(get_session),
-    current_user: User = Depends(require_roles("vendor", "admin")),
+    current_user: User = Depends(require_roles("vendor")),
 ) -> ApplicationResponse:
     service = ApplicationService(session)
     app = service.create(
@@ -68,12 +68,19 @@ def list_applications(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=100),
     include_archived: bool = Query(default=False, description="Whether to include soft-archived applications"),
+    all_tenants: bool = Query(default=False, description="Admin-only: list applications across all tenants"),
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> List[ApplicationResponse]:
+    if all_tenants and current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators may list applications across all tenants",
+        )
     service = ApplicationService(session)
+    target_user_id = None if (all_tenants and current_user.role == "admin") else current_user.id
     apps = service.list(
-        user_id=current_user.id,
+        user_id=target_user_id,
         include_archived=include_archived,
         skip=skip,
         limit=limit,
@@ -110,7 +117,7 @@ def update_application(
     app_id: UUID,
     request: ApplicationUpdateRequest,
     session: Session = Depends(get_session),
-    current_user: User = Depends(require_roles("vendor", "admin")),
+    current_user: User = Depends(require_roles("vendor")),
 ) -> ApplicationResponse:
     service = ApplicationService(session)
     app = service.update(

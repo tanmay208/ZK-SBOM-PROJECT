@@ -1,11 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { Suspense, useState, useMemo } from "react";
+import { Suspense, useState, useMemo, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { proofService } from "@/api/services/proofService";
 import { verificationService } from "@/api/services/verificationService";
+import { useAuth } from "@/auth/AuthProvider";
 import { RouteGuard } from "@/auth/RouteGuard";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -19,7 +20,7 @@ import { ApiError } from "@/api/errors";
 import { cn } from "@/lib/utils";
 import { formatTableTimestamp } from "@/lib/dateTime";
 import Link from "next/link";
-import { VerificationResponse } from "@/api/types";
+import { VerificationResponse, ProofShareResponse } from "@/api/types";
 import {
   AlertCircle,
   ArrowRight,
@@ -28,11 +29,13 @@ import {
   ExternalLink,
   FileBadge,
   Info,
+  KeyRound,
   Loader2,
   Lock,
   RotateCw,
   SearchX,
   ServerOff,
+  Share2,
   ShieldAlert,
   ShieldCheck,
   XCircle,
@@ -57,7 +60,7 @@ export function getVerificationOutcomeConfig(result: string | null | undefined):
         variant: "success",
         title: "Cryptographic Proof Verified",
         description:
-          "The Barretenberg verifier successfully evaluated all 256 UltraPlonk proof segments against the public commitments.",
+          "The Barretenberg verifier successfully evaluated all UltraPlonk proof segments against the authoritative public commitments.",
         icon: ShieldCheck,
       };
     case "invalid":
@@ -116,7 +119,7 @@ export function getVerificationOutcomeConfig(result: string | null | undefined):
         variant: "destructive",
         title: "Verification Unavailable",
         description:
-          "The verifier runtime environment is unavailable, required tooling is missing, or the submitted proof job is not owned by your active session.",
+          "The verifier runtime environment is unavailable, or the submitted proof job is not authorized for verification.",
         icon: ServerOff,
       };
     default:
@@ -133,11 +136,23 @@ export function getVerificationOutcomeConfig(result: string | null | undefined):
 function VerificationForm() {
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
+  const { user } = useAuth();
 
-  // Read requested proofId from query parameter
+  const isBuyer = user?.role === "buyer";
+  const isVendor = user?.role === "vendor";
+  const isAdmin = user?.role === "admin";
+
+  // URL Query Parameters
   const requestedProofId = searchParams.get("proofId") || "";
-  const [selectedProofId, setSelectedProofId] = useState<string | null>(null);
-  const activeProofId = selectedProofId !== null ? selectedProofId : requestedProofId;
+  const requestedToken = searchParams.get("token") || "";
+
+  // Component state
+  const [selectedProofId, setSelectedProofId] = useState<string | null>(requestedProofId || null);
+  const [selectedShareToken, setSelectedShareToken] = useState<string>(requestedToken);
+  const [manualTokenInput, setManualTokenInput] = useState<string>(requestedToken);
+  const [manualShare, setManualShare] = useState<ProofShareResponse | null>(null);
+  const [manualTokenError, setManualTokenError] = useState<string | null>(null);
+  const [isLookingUpToken, setIsLookingUpToken] = useState<boolean>(Boolean(requestedToken && isBuyer));
 
   const [verificationResult, setVerificationResult] = useState<VerificationResponse | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -152,7 +167,7 @@ function VerificationForm() {
     }
   };
 
-  // Query authorized proof jobs
+  // Query authorized completed proof jobs (for vendor / admin)
   const {
     data: proofs,
     isLoading: isLoadingProofs,
@@ -161,32 +176,134 @@ function VerificationForm() {
   } = useQuery({
     queryKey: ["proofs"],
     queryFn: () => proofService.list(),
+    enabled: !isBuyer, // Buyers don't own proof jobs directly
   });
 
-  // Filter completed proofs (only completed proofs can be verified)
   const completedProofs = useMemo(() => {
     return proofs?.filter((p) => p.status === "completed") || [];
   }, [proofs]);
 
-  // Selected proof object
-  const selectedProof = useMemo(() => {
-    return completedProofs.find((p) => p.id === activeProofId);
-  }, [completedProofs, activeProofId]);
+  // Query authorized verification shares (for buyer / admin)
+  const {
+    data: shares,
+    isLoading: isLoadingShares,
+    isError: sharesError,
+    refetch: refetchShares,
+  } = useQuery({
+    queryKey: ["verification-shares"],
+    queryFn: () => verificationService.listShares(),
+    enabled: !isVendor, // Vendors manage shares from proof details; on verify page they verify their jobs directly
+  });
+
+  const activeShares = useMemo(() => {
+    return shares?.filter((s) => s.is_active && !s.is_revoked) || [];
+  }, [shares]);
+
+  // Lookup token if requested via URL
+  useEffect(() => {
+    let ignore = false;
+    if (requestedToken && !manualShare && isBuyer) {
+      verificationService
+        .getShare(requestedToken)
+        .then((s) => {
+          if (!ignore) {
+            setManualShare(s);
+            setSelectedShareToken(s.share_token);
+          }
+        })
+        .catch((err) => {
+          if (!ignore) {
+            setManualTokenError(err instanceof ApiError ? err.message : "Invalid or expired share token.");
+          }
+        })
+        .finally(() => {
+          if (!ignore) {
+            setIsLookingUpToken(false);
+          }
+        });
+    }
+    return () => {
+      ignore = true;
+    };
+  }, [requestedToken, manualShare, isBuyer]);
+
+  // Determine current active target proof or share
+  const activeProof = useMemo(() => {
+    if (selectedProofId) {
+      return completedProofs.find((p) => p.id === selectedProofId) || null;
+    }
+    if (requestedProofId) {
+      return completedProofs.find((p) => p.id === requestedProofId) || null;
+    }
+    return null;
+  }, [completedProofs, selectedProofId, requestedProofId]);
+
+  const activeShare = useMemo(() => {
+    if (selectedShareToken) {
+      if (manualShare && manualShare.share_token === selectedShareToken) {
+        return manualShare;
+      }
+      return activeShares.find((s) => s.share_token === selectedShareToken) || manualShare;
+    }
+    return null;
+  }, [activeShares, selectedShareToken, manualShare]);
+
+  // Active public commitments to display and verify
+  const activeCommitments = useMemo(() => {
+    if (!isVendor && activeShare) {
+      return {
+        sbom_root: activeShare.sbom_root || "",
+        vulnerability_db_root: activeShare.vulnerability_db_root || "",
+        policy_hash: activeShare.policy_hash || "",
+        proof_job_id: activeShare.proof_job_id,
+        share_token: activeShare.share_token,
+      };
+    }
+    if (activeProof) {
+      return {
+        sbom_root: activeProof.sbom_root || "",
+        vulnerability_db_root: activeProof.vulnerability_db_root || "",
+        policy_hash: activeProof.policy_hash || "",
+        proof_job_id: activeProof.id,
+        share_token: null,
+      };
+    }
+    return null;
+  }, [activeShare, activeProof, isVendor]);
+
+  // Handle manual token lookup (Buyer / Admin)
+  const handleLookupToken = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualTokenInput.trim()) return;
+    setManualTokenError(null);
+    setIsLookingUpToken(true);
+    try {
+      const share = await verificationService.getShare(manualTokenInput.trim());
+      setManualShare(share);
+      setSelectedShareToken(share.share_token);
+      setSelectedProofId(null);
+      setVerificationResult(null);
+    } catch (err) {
+      setManualTokenError(
+        err instanceof ApiError ? err.message : "Verification reference token not found or expired."
+      );
+    } finally {
+      setIsLookingUpToken(false);
+    }
+  };
 
   // Verify mutation
   const verifyMutation = useMutation({
-    mutationFn: async (proofIdToVerify: string) => {
-      const targetProof = completedProofs.find((p) => p.id === proofIdToVerify);
-      if (!targetProof) {
-        throw new Error("Selected proof job was not found or is not completed.");
+    mutationFn: async () => {
+      if (!activeCommitments) {
+        throw new Error("No verifiable target selected.");
       }
-
-      // Explicitly extract ONLY the supported metadata and pass to backend
       return verificationService.verify({
-        sbom_root: targetProof.sbom_root || "",
-        vulnerability_db_root: targetProof.vulnerability_db_root || "",
-        policy_hash: targetProof.policy_hash || "",
-        proof_job_id: targetProof.id,
+        sbom_root: activeCommitments.sbom_root,
+        vulnerability_db_root: activeCommitments.vulnerability_db_root,
+        policy_hash: activeCommitments.policy_hash,
+        proof_job_id: activeCommitments.proof_job_id,
+        share_token: activeCommitments.share_token,
       });
     },
     onSuccess: (data) => {
@@ -198,30 +315,50 @@ function VerificationForm() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeProofId || verifyMutation.isPending) return;
+    if (isAdmin || !activeCommitments || verifyMutation.isPending) return;
     setVerificationResult(null);
-    verifyMutation.mutate(activeProofId);
+    verifyMutation.mutate();
   };
 
   const outcomeConfig = verificationResult ? getVerificationOutcomeConfig(verificationResult.result) : null;
   const OutcomeIcon = outcomeConfig?.icon || ShieldCheck;
 
+  // Header content depending on role
+  const pageTitle = isVendor
+    ? "Proof Verification"
+    : isBuyer
+    ? "Independent Proof Verification"
+    : "Proof Verification & Oversight";
+
+  const pageBadge = isVendor
+    ? "Vendor Self-Verification"
+    : isBuyer
+    ? "UltraPlonk Verifier"
+    : "UltraPlonk Verifier (Admin)";
+
+  const pageDescription = isVendor
+    ? "Verify your completed UltraPlonk proof artifacts against native Barretenberg verifier contracts and authoritative public commitments."
+    : isBuyer
+    ? "Verify UltraPlonk zero-knowledge proof artifacts against native Barretenberg verifier contracts and authoritative public commitments using an authorized verification reference."
+    : "Evaluate proof artifacts and shares against native verifier contracts and authoritative public commitments.";
+
   return (
     <div className="space-y-6">
-      {/* C1 Design System PageHeader */}
       <PageHeader
-        title="Independent Proof Verification"
-        description="Verify UltraPlonk zero-knowledge proof artifacts against native Barretenberg verifier contracts and authoritative public commitments."
+        title={pageTitle}
+        description={pageDescription}
         badge={
           <Badge variant="outline" className="font-mono text-xs text-primary border-primary/30">
-            UltraPlonk Verifier
+            {pageBadge}
           </Badge>
         }
         actions={
           <div className="flex items-center gap-2">
-            <Link href="/proofs" className={buttonVariants({ variant: "outline", size: "sm" })}>
-              Proof Jobs
-            </Link>
+            {!isBuyer && (
+              <Link href="/proofs" className={buttonVariants({ variant: "outline", size: "sm" })}>
+                Proof Jobs
+              </Link>
+            )}
             <Link href="/certificates" className={buttonVariants({ variant: "outline", size: "sm" })}>
               Certificates
             </Link>
@@ -234,9 +371,15 @@ function VerificationForm() {
         <Card className="shadow-xs">
           <form onSubmit={handleSubmit}>
             <CardHeader className="border-b border-border/60 pb-4">
-              <CardTitle className="text-lg font-semibold">Verification Target</CardTitle>
+              <CardTitle className="text-lg font-semibold">
+                {isVendor ? "Select Completed Proof Job" : "Verification Target"}
+              </CardTitle>
               <CardDescription className="text-xs">
-                Select a completed proof job to evaluate against authoritative public commitments.
+                {isVendor
+                  ? "Select one of your completed proof jobs to execute cryptographic self-verification."
+                  : isBuyer
+                  ? "Select an authorized vendor share or enter a verification reference token to evaluate."
+                  : "Select a completed proof job or authorized verification share to evaluate."}
               </CardDescription>
             </CardHeader>
 
@@ -254,204 +397,226 @@ function VerificationForm() {
                 </Alert>
               )}
 
-              {/* Upstream Query Error */}
-              {proofsError && (
-                <Alert variant="destructive">
-                  <AlertCircle className="size-4" />
-                  <AlertTitle>Unable to Load Proof Jobs</AlertTitle>
-                  <AlertDescription className="flex flex-col gap-2 mt-1 text-xs">
-                    <span>Authorized proof jobs could not be retrieved from the server.</span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="w-fit"
-                      onClick={() => void refetchProofs()}
+              {/* Vendor & Admin View: Completed Proof Jobs Selector */}
+              {!isBuyer && (
+                <div className="space-y-2">
+                  <Label htmlFor="proofSelect" className="text-xs font-semibold flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Zap className="size-3.5 text-primary" />
+                      {isVendor ? "Your Completed Proof Jobs" : "Proof Job (Administrative Evaluation)"}
+                    </span>
+                    <Badge variant="outline" className="text-[10px]">
+                      {completedProofs.length} Available
+                    </Badge>
+                  </Label>
+                  {completedProofs.length > 0 ? (
+                    <select
+                      id="proofSelect"
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      value={selectedProofId || ""}
+                      onChange={(e) => {
+                        setSelectedProofId(e.target.value || null);
+                        setSelectedShareToken("");
+                        setVerificationResult(null);
+                        verifyMutation.reset();
+                      }}
+                      disabled={verifyMutation.isPending}
                     >
-                      <RotateCw className="size-3.5 mr-1" />
-                      Retry Loading Proofs
-                    </Button>
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {/* Loading State */}
-              {isLoadingProofs ? (
-                <div className="flex flex-col items-center justify-center py-10 text-muted-foreground gap-3">
-                  <Loader2 className="size-6 animate-spin text-primary" />
-                  <p className="text-xs font-medium">Loading completed proof jobs...</p>
-                </div>
-              ) : completedProofs.length === 0 ? (
-                /* Empty Completed Proofs State */
-                <EmptyState
-                  icon={Zap}
-                  title="No verifiable proof jobs"
-                  description="Verification requires a completed UltraPlonk proof job. No completed jobs are currently available in your account."
-                  action={
-                    <div className="flex items-center gap-2">
+                      <option value="">-- Select Completed Proof Job --</option>
+                      {completedProofs.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          Job: {p.id.slice(0, 8)}... — SBOM: {p.sbom_upload_id.slice(0, 8)}... (Completed)
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="rounded-md border border-border/60 bg-muted/20 p-4 text-xs text-muted-foreground space-y-2">
+                      <p>No completed proof jobs found in your account.</p>
                       <Link href="/proofs/generate" className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}>
                         <span>Generate a Proof</span>
                         <ArrowRight className="size-3.5" />
                       </Link>
                     </div>
-                  }
-                />
-              ) : (
-                <div className="space-y-4">
-                  {/* Proof Selection Dropdown */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="proofSelect" className="text-xs font-semibold">
-                        Completed Proof Job <span className="text-destructive">*</span>
-                      </Label>
-                      {selectedProof && (
-                        <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                          Status: <StatusPill status={selectedProof.status} />
-                        </span>
-                      )}
-                    </div>
+                  )}
+                </div>
+              )}
 
-                    <select
-                      id="proofSelect"
-                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                      value={activeProofId}
-                      onChange={(e) => {
-                        setSelectedProofId(e.target.value);
-                        setVerificationResult(null);
-                        verifyMutation.reset();
-                      }}
-                      disabled={verifyMutation.isPending}
-                      required
+              {/* Buyer & Admin View: Manual Token Lookup Box */}
+              {!isVendor && (
+                <div className="rounded-lg border border-border/60 bg-muted/20 p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <Label htmlFor="tokenInput" className="font-semibold flex items-center gap-1.5">
+                      <KeyRound className="size-3.5 text-primary" />
+                      Enter Verification Reference
+                    </Label>
+                    <span className="text-[11px] text-muted-foreground">e.g. vref_...</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      id="tokenInput"
+                      type="text"
+                      value={manualTokenInput}
+                      onChange={(e) => setManualTokenInput(e.target.value)}
+                      placeholder="vref_..."
+                      className="flex h-9 flex-1 rounded-md border border-input bg-background px-3 py-1 text-xs font-mono shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      disabled={isLookingUpToken || verifyMutation.isPending}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={handleLookupToken}
+                      disabled={isLookingUpToken || !manualTokenInput.trim() || verifyMutation.isPending}
                     >
-                      <option value="">-- Select a Completed Proof Job --</option>
-                      {completedProofs.map((proof) => (
-                        <option key={proof.id} value={proof.id}>
-                          Job: {proof.id.slice(0, 8)}... — SBOM: {proof.sbom_upload_id.slice(0, 8)}... (Completed)
-                        </option>
-                      ))}
-                    </select>
+                      {isLookingUpToken ? <Loader2 className="size-3.5 animate-spin" /> : "Load Reference"}
+                    </Button>
+                  </div>
+                  {manualTokenError && (
+                    <p className="text-[11px] text-destructive flex items-center gap-1">
+                      <AlertCircle className="size-3" />
+                      {manualTokenError}
+                    </p>
+                  )}
+                  {activeShare && (
+                    <p className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-mono">
+                      <Check className="size-3" />
+                      Loaded share: {activeShare.share_token.slice(0, 16)}...
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Buyer & Admin View: Authorized Shares Selection */}
+              {!isVendor && activeShares.length > 0 && (
+                <div className="space-y-2">
+                  <Label htmlFor="shareSelect" className="text-xs font-semibold flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Share2 className="size-3.5 text-primary" />
+                      Authorized Vendor Shares
+                    </span>
+                    <Badge variant="outline" className="text-[10px]">
+                      {activeShares.length} Available
+                    </Badge>
+                  </Label>
+                  <select
+                    id="shareSelect"
+                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    value={selectedShareToken}
+                    onChange={(e) => {
+                      setSelectedShareToken(e.target.value);
+                      setSelectedProofId(null);
+                      setVerificationResult(null);
+                      verifyMutation.reset();
+                    }}
+                    disabled={verifyMutation.isPending}
+                  >
+                    <option value="">-- Select an Authorized Share --</option>
+                    {activeShares.map((s) => (
+                      <option key={s.id} value={s.share_token}>
+                        Ref: {s.share_token.slice(0, 14)}... — Job: {s.proof_job_id.slice(0, 8)}... (Role: {s.recipient_role})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Empty State for Buyer when no shares or references */}
+              {isBuyer && !activeCommitments && activeShares.length === 0 && (
+                <EmptyState
+                  icon={ShieldCheck}
+                  title="No Verification Shares Found"
+                  description="You do not have any shared proof jobs yet. Enter a verification reference token provided by your vendor above to verify their compliance."
+                />
+              )}
+
+              {/* Public Commitments Card */}
+              {activeCommitments && (
+                <div className="rounded-lg bg-muted/40 p-4 border border-border/50 space-y-3 text-xs">
+                  <div className="flex items-center justify-between border-b border-border/50 pb-2">
+                    <span className="font-semibold text-foreground text-xs">Public Inputs for Verification</span>
+                    <Badge variant="outline" className="font-mono text-[10px]">
+                      ZK-002 Bound
+                    </Badge>
                   </div>
 
-                  {/* Public Commitments Card */}
-                  {selectedProof ? (
-                    <div className="rounded-lg bg-muted/40 p-4 border border-border/50 space-y-3 text-xs">
-                      <div className="flex items-center justify-between border-b border-border/50 pb-2">
-                        <span className="font-semibold text-foreground text-xs">Public Inputs for Verification</span>
-                        <Badge variant="outline" className="font-mono text-[10px]">
-                          ZK-002 Bound
-                        </Badge>
-                      </div>
-
-                      {/* SBOM Root */}
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                          <span className="font-semibold uppercase tracking-wider text-[10px]">SBOM Root (R_SBOM)</span>
-                          {selectedProof.sbom_root && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-4 text-[10px] px-1 text-primary"
-                              onClick={() => copyToClipboard(selectedProof.sbom_root!, "sbom-root")}
-                            >
-                              {copiedKey === "sbom-root" ? "Copied" : "Copy"}
-                            </Button>
-                          )}
-                        </div>
-                        <p className="font-mono text-[11px] text-foreground break-all bg-background/80 p-2 rounded border border-border/40">
-                          {selectedProof.sbom_root || "—"}
-                        </p>
-                      </div>
-
-                      {/* Vulnerability DB Root */}
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                          <span className="font-semibold uppercase tracking-wider text-[10px]">
-                            Vulnerability DB Root (R_VulnDB)
-                          </span>
-                          {selectedProof.vulnerability_db_root && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-4 text-[10px] px-1 text-primary"
-                              onClick={() => copyToClipboard(selectedProof.vulnerability_db_root!, "vuln-root")}
-                            >
-                              {copiedKey === "vuln-root" ? "Copied" : "Copy"}
-                            </Button>
-                          )}
-                        </div>
-                        <p className="font-mono text-[11px] text-foreground break-all bg-background/80 p-2 rounded border border-border/40">
-                          {selectedProof.vulnerability_db_root || "—"}
-                        </p>
-                      </div>
-
-                      {/* Policy Hash */}
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                          <span className="font-semibold uppercase tracking-wider text-[10px]">
-                            Policy Hash (H_Policy)
-                          </span>
-                          {selectedProof.policy_hash && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-4 text-[10px] px-1 text-primary"
-                              onClick={() => copyToClipboard(selectedProof.policy_hash!, "policy-hash")}
-                            >
-                              {copiedKey === "policy-hash" ? "Copied" : "Copy"}
-                            </Button>
-                          )}
-                        </div>
-                        <p className="font-mono text-[11px] text-foreground break-all bg-background/80 p-2 rounded border border-border/40">
-                          {selectedProof.policy_hash || "—"}
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
-                      Select a completed proof above to inspect its tri-commitments prior to submission.
-                    </div>
-                  )}
-
-                  {/* Architecture & Requirement Notice */}
-                  <div className="rounded-lg bg-blue-500/5 border border-blue-500/20 p-3 text-[11px] text-muted-foreground leading-relaxed flex items-start gap-2.5">
-                    <Info className="size-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+                  <div className="space-y-2 font-mono text-[11px]">
                     <div>
-                      <strong className="text-foreground">Authoritative Job Binding:</strong> In the current system architecture, proof verification requires an authorized proof job ID. The backend verifier cross-references the 256 segment proof artifacts directly against stored UltraPlonk verification keys.
+                      <span className="text-muted-foreground block text-[10px] uppercase font-sans font-semibold">
+                        SBOM Merkle Root (R_SBOM)
+                      </span>
+                      <p className="text-foreground truncate select-all" title={activeCommitments.sbom_root}>
+                        {activeCommitments.sbom_root || "—"}
+                      </p>
                     </div>
+
+                    <div>
+                      <span className="text-muted-foreground block text-[10px] uppercase font-sans font-semibold">
+                        Vulnerability DB Root (R_VulnDB)
+                      </span>
+                      <p className="text-foreground truncate select-all" title={activeCommitments.vulnerability_db_root}>
+                        {activeCommitments.vulnerability_db_root || "—"}
+                      </p>
+                    </div>
+
+                    <div>
+                      <span className="text-muted-foreground block text-[10px] uppercase font-sans font-semibold">
+                        Policy Hash (H_Policy)
+                      </span>
+                      <p className="text-foreground truncate select-all" title={activeCommitments.policy_hash}>
+                        {activeCommitments.policy_hash || "—"}
+                      </p>
+                    </div>
+
+                    {activeCommitments.proof_job_id && (
+                      <div className="pt-1 border-t border-border/40 text-[10px]">
+                        <span className="text-muted-foreground font-sans font-medium">Job Reference: </span>
+                        <span className="text-muted-foreground select-all">{activeCommitments.proof_job_id}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
             </CardContent>
 
-            <CardFooter className="flex items-center justify-between border-t border-border/60 p-4 bg-muted/10">
-              <Link
-                href="/proofs"
-                className={cn(
-                  buttonVariants({ variant: "ghost", size: "sm" }),
-                  verifyMutation.isPending && "pointer-events-none opacity-50"
-                )}
+            <CardFooter className="border-t border-border/60 pt-4 flex items-center justify-between">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSelectedProofId(null);
+                  setSelectedShareToken("");
+                  setManualTokenInput("");
+                  setManualShare(null);
+                  setManualTokenError(null);
+                  setVerificationResult(null);
+                  verifyMutation.reset();
+                }}
+                disabled={!activeCommitments || verifyMutation.isPending}
               >
-                Back to Proofs
-              </Link>
+                Reset Target
+              </Button>
 
               <Button
                 type="submit"
                 size="sm"
-                disabled={verifyMutation.isPending || proofsError || !selectedProof || !activeProofId}
+                disabled={isAdmin || !activeCommitments || verifyMutation.isPending}
                 className="gap-2"
               >
                 {verifyMutation.isPending ? (
                   <>
                     <Loader2 className="size-4 animate-spin" />
-                    <span>Evaluating Proofs...</span>
+                    <span>Evaluating Proof...</span>
+                  </>
+                ) : isAdmin ? (
+                  <>
+                    <ShieldCheck className="size-4" />
+                    <span>Verification Restricted (Admin Oversight)</span>
                   </>
                 ) : (
                   <>
                     <ShieldCheck className="size-4" />
-                    <span>Verify Proof</span>
+                    <span>Verify Proof Artifact</span>
                   </>
                 )}
               </Button>
@@ -459,163 +624,149 @@ function VerificationForm() {
           </form>
         </Card>
 
-        {/* Right Column: Verification Results & Explanations */}
+        {/* Right Column: Verification Outcome & Protocol Walkthrough */}
         <div className="space-y-6">
-          <Card className="shadow-xs">
-            <CardHeader className="border-b border-border/60 pb-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-lg font-semibold">Verification Decision</CardTitle>
-                  <CardDescription className="text-xs">
-                    Authoritative cryptographic outcome issued by the verification service.
-                  </CardDescription>
-                </div>
-                {verificationResult && <StatusPill status={outcomeConfig?.pillStatus || "pending"} />}
-              </div>
-            </CardHeader>
-
-            <CardContent className="p-6 text-center">
-              {/* Idle State: No submission yet */}
-              {!verificationResult && !verifyMutation.isPending && (
-                <div className="flex flex-col items-center justify-center py-8 text-muted-foreground gap-3">
-                  <div className="flex size-12 items-center justify-center rounded-full bg-muted">
-                    <ShieldCheck className="size-6 text-muted-foreground/60" />
+          {verificationResult && outcomeConfig && (
+            <Card className="shadow-xs border-primary/20">
+              <CardHeader className="border-b border-border/60 pb-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <OutcomeIcon className="size-5 text-primary" />
+                    <CardTitle className="text-base font-semibold">{outcomeConfig.title}</CardTitle>
                   </div>
-                  <div>
-                    <p className="text-sm font-semibold text-foreground">Awaiting Verification Submission</p>
-                    <p className="text-xs text-muted-foreground mt-1 max-w-sm">
-                      Select an authorized completed proof job on the left and submit it to run the Barretenberg verifier contract.
-                    </p>
-                  </div>
+                  <StatusPill status={outcomeConfig.pillStatus} />
                 </div>
-              )}
+                <CardDescription className="text-xs pt-1">{outcomeConfig.description}</CardDescription>
+              </CardHeader>
 
-              {/* Pending Execution State */}
-              {verifyMutation.isPending && (
-                <div className="flex flex-col items-center justify-center py-8 text-muted-foreground gap-3">
-                  <Loader2 className="size-8 animate-spin text-primary" />
-                  <div>
-                    <p className="text-sm font-semibold text-foreground">Evaluating 256 Proof Segments</p>
-                    <p className="text-xs text-muted-foreground mt-1 max-w-sm">
-                      Checking ACIR constraints, opening polynomials, and validating tri-commitments against authoritative database roots...
-                    </p>
+              <CardContent className="space-y-4 pt-4 text-xs">
+                {/* Result Metadata */}
+                <div className="rounded-lg bg-muted/40 p-3 border border-border/40 space-y-2 font-mono text-[11px]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground font-sans text-[10px] uppercase font-semibold">
+                      Verification Request ID
+                    </span>
+                    <span className="truncate select-all">{verificationResult.id}</span>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground font-sans text-[10px] uppercase font-semibold">
+                      Evaluated At
+                    </span>
+                    <span className="font-sans">
+                      {formatTableTimestamp(verificationResult.verified_at || verificationResult.created_at)}
+                    </span>
                   </div>
                 </div>
-              )}
 
-              {/* Verification Outcome State */}
-              {verificationResult && outcomeConfig && (
-                <div className="space-y-5 text-left animate-in fade-in-50">
-                  <div className="flex items-start gap-3 p-4 rounded-lg border bg-muted/20">
-                    <div
-                      className={cn(
-                        "flex size-10 shrink-0 items-center justify-center rounded-lg mt-0.5",
-                        verificationResult.result === "verified"
-                          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                          : outcomeConfig.variant === "warning"
-                            ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                            : "bg-destructive/10 text-destructive"
-                      )}
-                    >
-                      <OutcomeIcon className="size-5" />
-                    </div>
-                    <div className="space-y-1">
-                      <h3 className="text-base font-semibold text-foreground">{outcomeConfig.title}</h3>
-                      <p className="text-xs text-muted-foreground leading-relaxed">{outcomeConfig.description}</p>
-                    </div>
-                  </div>
-
-                  {/* Metadata Table */}
-                  <div className="rounded-lg bg-muted/40 p-3 border border-border/50 space-y-2 text-xs">
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Verification Record ID:</span>
-                      <span className="font-mono text-[11px] text-foreground">{verificationResult.id}</span>
-                    </div>
-
-                    {verificationResult.verified_at && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-muted-foreground">Verified At:</span>
-                        <span className="text-[11px] text-foreground">
-                          {formatTableTimestamp(verificationResult.verified_at)}
-                        </span>
-                      </div>
-                    )}
-
-                    {verificationResult.policy_hash && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-muted-foreground">Bound Policy Hash:</span>
-                        <span className="font-mono text-[11px] text-foreground">
-                          {verificationResult.policy_hash.slice(0, 16)}...
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Certificate Minted Card (ONLY if verified and certificate is present) */}
-                  {verificationResult.result === "verified" && verificationResult.certificate && (
-                    <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <FileBadge className="size-4 text-emerald-600 dark:text-emerald-400" />
-                          <span className="text-xs font-semibold text-emerald-900 dark:text-emerald-200">
-                            Verification Certificate Minted
-                          </span>
-                        </div>
-                        <Badge variant="outline" className="text-[10px] text-emerald-700 dark:text-emerald-300 border-emerald-500/30">
-                          Active
-                        </Badge>
-                      </div>
-
-                      <p className="text-xs text-muted-foreground leading-relaxed">
-                        A public, tamper-evident verification certificate has been issued for this application state.
+                {/* Issued Certificate Section */}
+                {verificationResult.certificate ? (
+                  <Alert variant="success" className="border-emerald-500/30 bg-emerald-500/5">
+                    <FileBadge className="size-4 text-emerald-600 dark:text-emerald-400" />
+                    <AlertTitle className="text-xs font-semibold text-emerald-900 dark:text-emerald-200">
+                      Tamper-Evident Certificate Issued
+                    </AlertTitle>
+                    <AlertDescription className="space-y-2 mt-1.5">
+                      <p className="text-[11px] text-muted-foreground">
+                        An authoritative verification certificate was successfully recorded and signed by the local authority.
                       </p>
 
-                      <div className="flex items-center justify-between bg-background p-2 rounded border border-emerald-500/20 text-xs font-mono">
-                        <span className="truncate mr-2 text-foreground">{verificationResult.certificate.id}</span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 text-[10px] px-1.5 shrink-0"
-                          onClick={() => copyToClipboard(verificationResult.certificate!.id, "cert-id")}
-                        >
-                          {copiedKey === "cert-id" ? <Check className="size-3 text-emerald-500" /> : <Copy className="size-3" />}
-                        </Button>
-                      </div>
-
-                      <div className="pt-1">
+                      <div className="flex items-center justify-between pt-1 border-t border-emerald-500/20 text-[11px]">
+                        <span className="font-mono text-xs select-all truncate">
+                          ID: {verificationResult.certificate.id}
+                        </span>
                         <Link
                           href={`/certificates/${encodeURIComponent(verificationResult.certificate.id)}`}
-                          className={cn(buttonVariants({ size: "sm" }), "gap-1.5 w-full sm:w-auto")}
+                          className={cn(buttonVariants({ size: "xs", variant: "default" }), "gap-1 shrink-0 ml-2")}
                         >
-                          <span>View Public Certificate</span>
-                          <ExternalLink className="size-3.5" />
+                          <span>Open Certificate</span>
+                          <ExternalLink className="size-3" />
                         </Link>
                       </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
 
-          {/* Cryptographic Scope & Boundary Explanation Card */}
-          <Card className="bg-card/60 border-border/70 text-xs">
-            <CardHeader className="pb-2">
-              <div className="flex items-center gap-2">
-                <Lock className="size-4 text-primary" />
-                <CardTitle className="text-sm font-semibold">Cryptographic Claim Bounds</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-2 text-muted-foreground text-[11px] leading-relaxed">
-              <p>
-                <strong>What verification proves:</strong> A valid proof establishes that every component in the software bill of materials committed in <span className="font-mono text-foreground">R_SBOM</span> satisfies the threshold configured in <span className="font-mono text-foreground">H_Policy</span> against vulnerability intelligence snapshot <span className="font-mono text-foreground">R_VulnDB</span>.
-              </p>
-              <p>
-                <strong>What verification does NOT prove:</strong> Verification does not prove that an application is free from all vulnerabilities, does not guarantee zero-day immunity, and does not evaluate components outside the committed SBOM.
-              </p>
-            </CardContent>
-          </Card>
+                      {verificationResult.certificate.sha256_fingerprint && (
+                        <div className="text-[10px] font-mono text-muted-foreground pt-1 truncate">
+                          SHA-256: {verificationResult.certificate.sha256_fingerprint}
+                        </div>
+                      )}
+                    </AlertDescription>
+                  </Alert>
+                ) : (
+                  <Alert variant="warning" className="text-xs">
+                    <AlertCircle className="size-4" />
+                    <AlertTitle className="text-xs font-semibold">No Certificate Issued</AlertTitle>
+                    <AlertDescription className="text-[11px] mt-0.5">
+                      {verificationResult.result === "verified"
+                        ? "Verification succeeded, but certificate issuance was deferred or existing."
+                        : "A verification certificate is minted strictly when the UltraPlonk proof satisfies all constraints and commitments."}
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Protocol Architecture Walkthrough Card */}
+          {(!verificationResult || isVendor) && (
+            <Card className="shadow-xs border-border/80">
+              <CardHeader className="border-b border-border/60 pb-3">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <Lock className="size-4 text-primary" />
+                  {isVendor ? "Vendor Verification Lifecycle" : "Independent Verification Protocol"}
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  {isVendor
+                    ? "Verify your completed zero-knowledge proofs before generating buyer references."
+                    : "Zero-knowledge verification ensures cryptographic certainty without revealing private dependencies."}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3.5 pt-4 text-xs text-muted-foreground">
+                <div className="space-y-3">
+                  <div className="flex gap-2">
+                    <div className="size-5 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">
+                      1
+                    </div>
+                    <p>
+                      <strong>{isVendor ? "Completed Proof Selection" : "Reference Token Resolution"}:</strong>{" "}
+                      {isVendor
+                        ? "Select your completed UltraPlonk proof job. The Merkle root commitments are loaded directly from your verified job."
+                        : "The buyer inputs a high-entropy reference token (vref_...) to load the vendor's public commitments without inspecting private data."}
+                    </p>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <div className="size-5 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">
+                      2
+                    </div>
+                    <p>
+                      <strong>Cryptographic Public Inputs:</strong> Commitments for the SBOM Merkle root (
+                      <code>R_SBOM</code>), Vulnerability SMT root (<code>R_VulnDB</code>), and policy digest (
+                      <code>H_Policy</code>) are cryptographically bound via ZK-002.
+                    </p>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <div className="size-5 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">
+                      3
+                    </div>
+                    <p>
+                      <strong>Native Verifier Evaluation:</strong> The native Barretenberg contract evaluates polynomial segment constraints. If compliant, an authoritative certificate is recorded.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="rounded-md bg-muted/40 p-3 border border-border/40 mt-4 text-[11px]">
+                  <p className="font-semibold text-foreground flex items-center gap-1.5 mb-1">
+                    <ShieldCheck className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                    Zero-Knowledge Privacy Guarantee
+                  </p>
+                  <p>
+                    Verification operates strictly on public Merkle roots. Private dependency manifests, vendor source components, and internal build metadata remain strictly confidential.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
     </div>
@@ -624,12 +775,12 @@ function VerificationForm() {
 
 export default function VerifyPage() {
   return (
-    <RouteGuard allowedRoles={["vendor", "admin", "buyer"]}>
+    <RouteGuard allowedRoles={["vendor", "buyer"]}>
       <Suspense
         fallback={
-          <div className="flex flex-col items-center justify-center py-16 gap-3">
-            <Loader2 className="size-8 animate-spin text-primary" />
-            <p className="text-xs text-muted-foreground">Loading verification workspace...</p>
+          <div className="flex items-center justify-center py-20 text-muted-foreground gap-3">
+            <Loader2 className="size-6 animate-spin text-primary" />
+            <span className="text-xs">Loading verification console...</span>
           </div>
         }
       >

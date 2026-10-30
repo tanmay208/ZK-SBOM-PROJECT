@@ -142,3 +142,39 @@ test("Certificate - Malformed UUID vs Missing Certificate Classification", () =>
   assert.strictEqual(serverError.isNotFound, false);
   assert.strictEqual(serverError.title, "Error Validating Certificate");
 });
+
+
+test("Certificate - Public Certificate Record Layout & Centering Invariants", async () => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+
+  const componentPath = path.resolve(process.cwd(), "src/app/certificates/[id]/page.tsx");
+  const content = fs.readFileSync(componentPath, "utf-8");
+
+  // 1. Horizontally centered responsive container wrapper (max-w-5xl, mx-auto, responsive padding)
+  assert.ok(
+    content.includes("max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6 sm:space-y-8"),
+    "Certificate page must use a responsive max-w-5xl horizontally centered wrapper (mx-auto)"
+  );
+
+  // 2. Consistent centering across loading, error, and main attestation states
+  const centerMatches = content.match(/max-w-5xl mx-auto/g);
+  assert.strictEqual(
+    centerMatches?.length,
+    3,
+    "All three states (loading, error, and active) must enforce identical centered layout"
+  );
+
+  // 3. Overflow prevention on technical identifiers
+  assert.ok(
+    content.includes("break-all"),
+    "Certificate UUID must enforce break-all to prevent horizontal overflow on mobile viewports"
+  );
+
+  // 4. Essential actions and hierarchy
+  assert.ok(content.includes("Public Certificate Record"), "Page title must be preserved");
+  assert.ok(content.includes("Re-check Validity"), "Re-check Validity action button must be preserved");
+  assert.ok(content.includes("Verify Another"), "Verify Another navigation action must be preserved");
+  assert.ok(content.includes("Zero-Knowledge Verification Scope"), "Zero-knowledge scope section must be preserved");
+  assert.ok(content.includes("Tamper-Evidence & Revocation"), "Tamper-evidence section must be preserved");
+});

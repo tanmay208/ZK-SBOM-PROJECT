@@ -504,7 +504,7 @@ function GenerateProofForm() {
 
 export default function GenerateProofPage() {
   return (
-    <RouteGuard allowedRoles={["vendor", "admin"]}>
+    <RouteGuard allowedRoles={["vendor"]}>
       <Suspense
         fallback={
           <div className="flex flex-col items-center justify-center py-16 gap-3">

@@ -722,81 +722,90 @@ def test_credential_non_disclosure(client, db_session):
 # 8. Concurrency Simulation Test
 # ---------------------------------------------------------------------------
 
-def test_concurrent_last_admin_demotion_race_condition(db_engine):
+def test_concurrent_last_admin_demotion_race_condition():
     """
     Simulates concurrent requests attempting to demote the two remaining active administrators.
     Verifies that the concurrency protection serializes execution and prevents losing the last admin.
+    Uses a temporary file-backed SQLite database so each worker thread gets an independent connection.
     """
-    SessionLocal = sessionmaker(bind=db_engine, autocommit=False, autoflush=False)
-    setup_session = SessionLocal()
+    import tempfile
+    tf = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+    tf.close()
+    db_path = tf.name
 
-    # Clear table and seed exactly 2 active administrators
-    setup_session.query(User).delete()
-    admin_a = User(username="admin_concurrent_a", hashed_password=get_password_hash("passA!"), role="admin", is_active=True)
-    admin_b = User(username="admin_concurrent_b", hashed_password=get_password_hash("passB!"), role="admin", is_active=True)
-    setup_session.add_all([admin_a, admin_b])
-    setup_session.commit()
-    id_a = admin_a.id
-    id_b = admin_b.id
-    setup_session.close()
+    concurrent_engine = create_engine(
+        f"sqlite:///{db_path}",
+        connect_args={"check_same_thread": False, "timeout": 30},
+    )
+    Base.metadata.create_all(concurrent_engine, tables=[User.__table__])
+    SessionLocal = sessionmaker(bind=concurrent_engine, autocommit=False, autoflush=False)
 
-    # Create thread-local session provider so each worker gets its own isolated session
-    thread_local = threading.local()
+    try:
+        setup_session = SessionLocal()
+        admin_a = User(username="admin_concurrent_a", hashed_password=get_password_hash("passA!"), role="admin", is_active=True)
+        admin_b = User(username="admin_concurrent_b", hashed_password=get_password_hash("passB!"), role="admin", is_active=True)
+        setup_session.add_all([admin_a, admin_b])
+        setup_session.commit()
+        id_a = admin_a.id
+        id_b = admin_b.id
+        setup_session.close()
 
-    def get_test_session():
-        if not hasattr(thread_local, "session") or thread_local.session is None:
+        thread_local = threading.local()
+
+        def get_test_session():
+            if not hasattr(thread_local, "session") or thread_local.session is None:
+                thread_local.session = SessionLocal()
+            return thread_local.session
+
+        app.dependency_overrides[get_session] = get_test_session
+
+        results = []
+
+        def demote_worker(target_id: UUID, admin_user: User):
             thread_local.session = SessionLocal()
-        return thread_local.session
+            try:
+                client = TestClient(app)
+                headers = get_auth_headers(admin_user)
+                resp = client.patch(
+                    f"/api/v1/admin/users/{target_id}/role",
+                    json={"role": "buyer"},
+                    headers=headers,
+                )
+                results.append((target_id, resp.status_code, resp.text))
+            finally:
+                if hasattr(thread_local, "session") and thread_local.session:
+                    thread_local.session.close()
+                    thread_local.session = None
 
-    app.dependency_overrides[get_session] = get_test_session
-    
-    # We will run two threads simultaneously targeting Admin A and Admin B
-    results = []
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            f1 = executor.submit(demote_worker, id_a, admin_a)
+            f2 = executor.submit(demote_worker, id_b, admin_b)
+            f1.result()
+            f2.result()
 
-    def demote_worker(target_id: UUID, admin_user: User):
-        thread_local.session = SessionLocal()
+        app.dependency_overrides.clear()
+
+        statuses = [r[1] for r in results]
+        assert 200 in statuses, f"Expected one successful demotion, got: {results}"
+        assert 400 in statuses, f"Expected one rejected demotion to protect the last admin, got: {results}"
+
+        verify_session = SessionLocal()
+        active_admins_remaining = (
+            verify_session.query(User)
+            .filter(User.role == "admin", User.is_active == True)
+            .count()
+        )
+        assert active_admins_remaining == 1, (
+            f"Critical Invariant Violated! Expected 1 active admin remaining, found {active_admins_remaining}"
+        )
+        verify_session.close()
+    finally:
+        app.dependency_overrides.clear()
+        concurrent_engine.dispose()
         try:
-            client = TestClient(app)
-            headers = get_auth_headers(admin_user)
-            resp = client.patch(
-                f"/api/v1/admin/users/{target_id}/role",
-                json={"role": "buyer"},
-                headers=headers,
-            )
-            results.append((target_id, resp.status_code, resp.text))
-        finally:
-            if hasattr(thread_local, "session") and thread_local.session:
-                thread_local.session.close()
-                thread_local.session = None
-
-    # Execute both threads concurrently
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        f1 = executor.submit(demote_worker, id_a, admin_a)
-        f2 = executor.submit(demote_worker, id_b, admin_b)
-        f1.result()
-        f2.result()
-
-    app.dependency_overrides.clear()
-
-    # Verify results:
-    # Under correct concurrency serialization:
-    # Exactly one request must succeed (HTTP 200) and one must be rejected (HTTP 400)!
-    statuses = [r[1] for r in results]
-    assert 200 in statuses, f"Expected one successful demotion, got: {results}"
-    assert 400 in statuses, f"Expected one rejected demotion to protect the last admin, got: {results}"
-
-    # Verify database state directly: AT LEAST ONE ACTIVE ADMIN MUST REMAIN
-    verify_session = SessionLocal()
-    active_admins_remaining = (
-        verify_session.query(User)
-        .filter(User.role == "admin", User.is_active == True)
-        .count()
-    )
-    assert active_admins_remaining == 1, (
-        f"Critical Invariant Violated! Expected 1 active admin remaining, found {active_admins_remaining}"
-    )
-    verify_session.close()
-
+            os.remove(db_path)
+        except Exception:
+            pass
 
 # ---------------------------------------------------------------------------
 # 9. Structured Audit Event Logging Tests (D7-2)
@@ -884,3 +893,90 @@ def test_admin_user_role_and_status_audit_events(mock_audit, client, db_session)
         outcome="denied",
     )
 
+
+
+def test_admin_delete_vendor_and_buyer_success(client: TestClient, db_session: Session):
+    admin = create_test_user(db_session, "admin_del_test", role="admin", is_active=True)
+    vendor = create_test_user(db_session, "vendor_del_test", role="vendor", is_active=True)
+    buyer = create_test_user(db_session, "buyer_del_test", role="buyer", is_active=True)
+    headers = get_auth_headers(admin)
+
+    # 1. Admin deletes vendor account
+    resp_vendor = client.delete(f"/api/v1/admin/users/{vendor.id}", headers=headers)
+    assert resp_vendor.status_code == 200, resp_vendor.text
+    data = resp_vendor.json()
+    assert data["deleted"] is True
+    assert data["id"] == str(vendor.id)
+
+    # Verify vendor is gone from DB
+    deleted_vendor = db_session.query(User).filter(User.id == vendor.id).first()
+    assert deleted_vendor is None
+
+    # 2. Repeated deletion returns 404
+    resp_repeat = client.delete(f"/api/v1/admin/users/{vendor.id}", headers=headers)
+    assert resp_repeat.status_code == 404
+
+    # 3. Admin deletes buyer account
+    resp_buyer = client.delete(f"/api/v1/admin/users/{buyer.id}", headers=headers)
+    assert resp_buyer.status_code == 200, resp_buyer.text
+    assert resp_buyer.json()["deleted"] is True
+
+
+def test_admin_delete_admin_account_rejected(client: TestClient, db_session: Session):
+    admin1 = create_test_user(db_session, "admin_del_1", role="admin", is_active=True)
+    admin2 = create_test_user(db_session, "admin_del_2", role="admin", is_active=True)
+    headers1 = get_auth_headers(admin1)
+
+    # Attempt to delete another admin
+    resp = client.delete(f"/api/v1/admin/users/{admin2.id}", headers=headers1)
+    assert resp.status_code == 400
+    err_msg = resp.json().get("error") or resp.json().get("detail")
+    assert "Administrator accounts cannot be deleted" in err_msg
+
+
+def test_admin_self_deletion_rejected(client: TestClient, db_session: Session):
+    admin = create_test_user(db_session, "admin_self_del", role="admin", is_active=True)
+    headers = get_auth_headers(admin)
+
+    # Attempt to delete own account
+    resp = client.delete(f"/api/v1/admin/users/{admin.id}", headers=headers)
+    assert resp.status_code == 400
+    err_msg = resp.json().get("error") or resp.json().get("detail")
+    assert "Administrators cannot delete their own account" in err_msg
+
+
+def test_non_admin_cannot_delete_users(client: TestClient, db_session: Session):
+    admin = create_test_user(db_session, "admin_target", role="admin", is_active=True)
+    vendor = create_test_user(db_session, "vendor_attempt", role="vendor", is_active=True)
+    buyer = create_test_user(db_session, "buyer_target", role="buyer", is_active=True)
+
+    vendor_headers = get_auth_headers(vendor)
+    buyer_headers = get_auth_headers(buyer)
+
+    # Vendor attempts to delete buyer
+    resp_v = client.delete(f"/api/v1/admin/users/{buyer.id}", headers=vendor_headers)
+    assert resp_v.status_code == 403
+
+    # Buyer attempts to delete vendor
+    resp_b = client.delete(f"/api/v1/admin/users/{vendor.id}", headers=buyer_headers)
+    assert resp_b.status_code == 403
+
+    # Unauthenticated attempts to delete
+    resp_unauth = client.delete(f"/api/v1/admin/users/{vendor.id}")
+    assert resp_unauth.status_code == 401
+
+
+def test_deleted_user_token_invalidated_immediately(client: TestClient, db_session: Session):
+    admin = create_test_user(db_session, "admin_deleter", role="admin", is_active=True)
+    vendor = create_test_user(db_session, "vendor_to_delete", role="vendor", is_active=True)
+
+    vendor_headers = get_auth_headers(vendor)
+    admin_headers = get_auth_headers(admin)
+
+    # Admin deletes vendor
+    resp_del = client.delete(f"/api/v1/admin/users/{vendor.id}", headers=admin_headers)
+    assert resp_del.status_code == 200
+
+    # Vendor token is immediately rejected with 401
+    resp_post = client.get(f"/api/v1/admin/users/{vendor.id}", headers=vendor_headers)
+    assert resp_post.status_code == 401

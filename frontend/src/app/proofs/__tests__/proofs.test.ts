@@ -3,9 +3,9 @@ import assert from "node:assert";
 import { proofService } from "@/api/services/proofService";
 
 test("Proof Generation - Role Access Enforcement", () => {
-  const allowedRoles = ["vendor", "admin"];
+  const allowedRoles = ["vendor"];
   assert.ok(allowedRoles.includes("vendor"), "Vendor is allowed to generate proofs");
-  assert.ok(allowedRoles.includes("admin"), "Admin is allowed to generate proofs");
+  assert.ok(!allowedRoles.includes("admin"), "Admin is strictly prohibited from proof generation");
   assert.ok(!allowedRoles.includes("auditor"), "Auditor is explicitly forbidden");
   assert.ok(!allowedRoles.includes("trusted_importer"), "Trusted importer is explicitly forbidden");
 });

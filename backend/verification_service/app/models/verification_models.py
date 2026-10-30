@@ -64,7 +64,7 @@ class VerificationRequest(Base):
     created_at = Column(
         DateTime, nullable=False, server_default=func.now()
     )
-    
+
     certificate = relationship("VerificationCertificate", backref="request", uselist=False, cascade="all, delete-orphan")
 
 
@@ -116,3 +116,54 @@ class VerificationCertificate(Base):
             return None
         return hashlib.sha256(self.certificate_data.encode("utf-8")).hexdigest()
 
+
+class ProofShare(Base):
+    """
+    An authorization record allowing a buyer (or buyers) to independently
+    verify a vendor's completed proof job against public commitments.
+    """
+
+    __tablename__ = "proof_shares"
+    __table_args__ = (
+        UniqueConstraint("share_token", name="uq_verification_proof_shares_token"),
+        CheckConstraint(
+            "(is_revoked = false AND revoked_at IS NULL) OR "
+            "(is_revoked = true AND revoked_at IS NOT NULL)",
+            name="chk_proof_share_revocation_state",
+        ),
+        {"schema": "verification"},
+    )
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    proof_job_id = Column(
+        Uuid,
+        ForeignKey("zkp.proof_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    vendor_id = Column(
+        Uuid,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    share_token = Column(String(64), nullable=False, unique=True, index=True)
+    recipient_role = Column(String(20), nullable=False, default="buyer")
+    recipient_user_id = Column(
+        Uuid,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    is_revoked = Column(Boolean, nullable=False, default=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    @property
+    def is_active(self) -> bool:
+        """Check if the share is currently active, unrevoked, and unexpired."""
+        if self.is_revoked:
+            return False
+        if self.expires_at is not None:
+            now = datetime.now(self.expires_at.tzinfo) if self.expires_at.tzinfo else datetime.utcnow()
+            if now > self.expires_at:
+                return False
+        return True

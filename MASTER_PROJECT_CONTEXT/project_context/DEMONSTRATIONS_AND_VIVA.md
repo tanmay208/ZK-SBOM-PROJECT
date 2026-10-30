@@ -1,12 +1,12 @@
 # Demonstration Scenarios & Viva Defense Preparation Guide
 
-**Project:** Zero-Knowledge Verification for Software Supply Chain Security  
-**Workspace Root:** `E:\Main Project`  
-**Document Status:** Canonical Demonstration & Viva Defense Guide (Stage F5 Deliverable)  
-**Target Audience:** Students, Project Examiners, Evaluators, and Technical Auditors  
-**Operating Mode:** LOCAL-ONLY (No remote deployments or staging mutations permitted)  
-**Effective Date:** 22 October 2026  
-**Document Version:** 1.0.0-final-stage-f5  
+**Project:** Zero-Knowledge Verification for Software Supply Chain Security
+**Workspace Root:** `E:\Main Project`
+**Document Status:** Canonical Demonstration & Viva Defense Guide (Stage F5 Deliverable)
+**Target Audience:** Students, Project Examiners, Evaluators, and Technical Auditors
+**Operating Mode:** LOCAL-ONLY (No remote deployments or staging mutations permitted)
+**Effective Date:** 30 October 2026
+**Document Version:** 2.0.0-final-release-ready
 
 ---
 
@@ -627,3 +627,166 @@ When conducting demonstrations or evaluating the platform:
 ---
 
 *End of Demonstration Scenarios & Viva Defense Preparation Guide.*
+
+
+
+
+---
+
+
+
+## 8. Master Prompt 5 Validated Expo Workflow (The Official Expo Runbook)
+
+
+
+The following 7-step sequence is the empirically verified demonstration procedure (Master Prompt 5):
+
+
+
+```mermaid
+
+sequenceDiagram
+
+    autonumber
+
+    actor Admin as Platform Admin
+
+    actor Vendor as Software Vendor (Alice)
+
+    actor Buyer as Procurement Buyer (Bob)
+
+    participant Gateway as Verification Gateway
+
+    participant BB as Barretenberg UltraPlonk
+
+
+
+    Admin->>Gateway: Step 1: Ingest Threat Feed & Freeze Snapshot (TPI)
+
+    Admin->>Gateway: Step 2: Activate Security Policy (Max CVSS 7.0)
+
+    Vendor->>Gateway: Step 3: Upload Vulnerable SBOM (tough-cookie@4.0.0)
+
+    Gateway-->>Vendor: Assessment: VIOLATION (CVSS 7.5 > 7.0) -> Proving BLOCKED (0 certs)
+
+    Vendor->>Gateway: Step 4: Upload Fixed SBOM (tough-cookie@4.1.3)
+
+    Gateway-->>Vendor: Assessment: COMPLIANT -> Generate UltraPlonk Proof
+
+    Vendor->>Gateway: Step 5: Generate Verification Share Token
+
+    Gateway-->>Vendor: Active Share Token Issued (Previous tokens auto-revoked)
+
+    Buyer->>Gateway: Step 6: Verify Proof via Authorized Share Token
+
+    Gateway->>BB: Execute verify_bound_proof (Native Barretenberg)
+
+    BB-->>Gateway: Boolean True (Valid Proof)
+
+    Gateway-->>Buyer: Verified -> Mints Certificate (HS256 with bound V2 claims)
+
+    Buyer->>Gateway: Step 7: Tamper Test (Mutated Public Inputs)
+
+    Gateway->>BB: Execute verify_bound_proof (Tampered Inputs)
+
+    BB-->>Gateway: Boolean False -> Verification Fails Closed (0 certs)
+
+```
+
+
+
+### Step-by-Step Scripted Actions & Speaking Points
+
+
+
+#### Step 1: Admin Snapshot Ingestion & Two-Person Freeze
+
+- **Action**: Ingest npm vulnerability feed via OSV adapter. Second administrator approves and freezes snapshot.
+
+- **Presenter Speaking Point**: *"Supply chain security intelligence requires Two-Person Integrity. One admin cannot unilaterally alter threat data. Once frozen, the vulnerability root $R_{\text{VulnDB}}$ is mathematically locked in a 256-level Sparse Merkle Tree."*
+
+- **Verification**: Snapshot status is `frozen`; SMT root and `ecosystems_covered: ["npm"]` are displayed.
+
+
+
+#### Step 2: Policy Configuration
+
+- **Action**: Activate `Strict CVSS 7.0 Policy` (`max_allowed_cvss = 7.0`, `revision = 1`).
+
+- **Presenter Speaking Point**: *"The policy defines the acceptance boundary. The policy parameters are hashed into a circuit commitment $H_{\text{Policy}}$ and an authoritative V2 contract digest."*
+
+
+
+#### Step 3: Vulnerable SBOM Rejection (Negative Test)
+
+- **Action**: Vendor uploads SBOM containing `tough-cookie@4.0.0` (affected by `GHSA-87hp-cr8f-2rh6`, CVSS 7.5).
+
+- **Presenter Speaking Point**: *"The vendor submits their SBOM. The system normalizes the components and matches them against the frozen intelligence. Tough-cookie 4.0.0 exceeds our 7.0 ceiling with CVSS 7.5. Proof generation is blocked fail-closed. Zero certificates are issued."*
+
+- **Result**: `VIOLATION` verdict, proving preflight aborts with HTTP 422.
+
+
+
+#### Step 4: Fixed SBOM Proving
+
+- **Action**: Vendor uploads fixed SBOM containing `tough-cookie@4.1.3`. Generates UltraPlonk proof.
+
+- **Presenter Speaking Point**: *"The vendor patches the vulnerability by upgrading to version 4.1.3. Now the SBOM complies with the policy. We generate an UltraPlonk zero-knowledge proof across decomposed circuits, proving compliance without revealing component names or internal architecture."*
+
+- **Result**: Assessment returns `COMPLIANT`. Proof generation completes.
+
+
+
+#### Step 5: Vendor Generates Verification Share
+
+- **Action**: Vendor clicks **Share Proof** to generate a single-use verification reference token for the buyer.
+
+- **Presenter Speaking Point**: *"Vendors do not self-certify. Instead, they grant an authorized verification share to the buyer. Only one active share token exists per proof job at any time."*
+
+- **Result**: Single active share token generated; previous tokens for this job are auto-revoked.
+
+
+
+#### Step 6: Buyer Independent Verification
+
+- **Action**: Buyer enters share token into the Verification portal and initiates verification.
+
+- **Presenter Speaking Point**: *"The buyer verifies the proof independently. Our native Barretenberg verifier checks polynomial commitments directly against public inputs ($R_{\text{SBOM}}, R_{\text{VulnDB}}, H_{\text{Policy}}$). Only upon cryptographic verification is an authoritative compliance certificate minted."*
+
+- **Result**: Verification succeeds; certificate minted with bound V2 claims.
+
+
+
+#### Step 7: Tamper Rejection
+
+- **Action**: Submit verification request with altered root or tampered proof token.
+
+- **Presenter Speaking Point**: *"Any alteration in public inputs causes UltraPlonk verification to fail immediately, preventing certificate forgery."*
+
+- **Result**: Verifier returns `result = "failed"`, zero certificates minted.
+
+
+
+---
+
+
+
+## 9. Examiner Viva FAQ: Master Prompt 1–5 Technical Additions
+
+
+
+### Q21: Can a vendor prove non-membership for an npm component against a PyPI-only vulnerability database?
+
+**Answer:** *Mathematically inside the circuit, yes—because an npm component is genuinely absent from a PyPI-only tree, producing a valid SMT non-membership proof. However, at the system architecture layer, this is strictly blocked by our backend verification gateway. `SnapshotValidator` inspects the snapshot's cryptographically committed provenance metadata (`ecosystems_covered`) and rejects the verification fail-closed with `BLOCKED_INSUFFICIENT_COVERAGE`. Circuit arithmetic proves tree non-membership; the backend gateway ensures tree relevance.*
+
+
+
+### Q22: Are the compliance certificates publicly verifiable digital signatures?
+
+**Answer:** *The current implementation uses HS256 JSON Web Tokens (HMAC-SHA256), which is a symmetric MAC-based mechanism keyed by the authority's shared secret (`CERTIFICATE_SECRET_KEY`). This provides strong authentication and tamper protection for verification gateways holding the secret. It does not provide public-key non-repudiation without secret possession. Upgrading to asymmetric Ed25519 signatures is documented on the architectural roadmap.*
+
+
+
+### Q23: How does the system prevent a race condition where a snapshot is revoked during proof verification?
+
+**Answer:** *Through an atomic pre-signing re-validation check in `VerificationRepository.create_verification_record`. Within the active transaction, immediately prior to signing and persisting the certificate, the gateway re-queries the authoritative database state of `ProofJob`, `VulnerabilitySnapshot`, and `SecurityPolicy`. If the snapshot is revoked or expired, the transaction aborts fail-closed, and zero certificates are issued.*

@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { sbomService } from "@/api/services/sbomService";
 import { SBOMUploadResponse } from "@/api/types";
 import { RouteGuard } from "@/auth/RouteGuard";
+import { useAuth } from "@/auth/AuthProvider";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,9 +39,12 @@ import {
 } from "lucide-react";
 
 function SbomList() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+
   const { data: sboms, isLoading, error, refetch, isFetching } = useQuery({
-    queryKey: ["sboms"],
-    queryFn: () => sbomService.list(),
+    queryKey: ["sboms", isAdmin],
+    queryFn: () => sbomService.list({ all_tenants: isAdmin }),
   });
 
   const [searchTerm, setSearchTerm] = useState("");
@@ -92,8 +96,12 @@ function SbomList() {
     <div className="space-y-6">
       {/* C1 Design System PageHeader */}
       <PageHeader
-        title="SBOM Workspace"
-        description="Cryptographic software bill of materials commitments for vendor applications."
+        title={isAdmin ? "Platform SBOM Inventory" : "SBOM Workspace"}
+        description={
+          isAdmin
+            ? "Platform-wide software bill of materials inventory and cryptographic commitments across all vendors."
+            : "Cryptographic software bill of materials commitments for vendor applications."
+        }
         badge={
           <Badge variant="outline" className="font-mono text-xs text-muted-foreground">
             CycloneDX JSON
@@ -111,10 +119,12 @@ function SbomList() {
               <RotateCw className={cn("size-3.5", (isLoading || isFetching) && "animate-spin")} />
               <span>Refresh</span>
             </Button>
-            <Link href="/sboms/upload" className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}>
-              <Plus className="size-4" />
-              <span>Upload SBOM</span>
-            </Link>
+            {!isAdmin && (
+              <Link href="/sboms/upload" className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}>
+                <Plus className="size-4" />
+                <span>Upload SBOM</span>
+              </Link>
+            )}
           </div>
         }
       />
@@ -278,12 +288,18 @@ function SbomList() {
             <EmptyState
               icon={FileBox}
               title="No SBOM commitments found"
-              description="You haven't uploaded any software bills of materials yet. Upload a CycloneDX JSON document to generate cryptographic commitments."
+              description={
+                isAdmin
+                  ? "No software bills of materials have been committed across the platform yet."
+                  : "You haven't uploaded any software bills of materials yet. Upload a CycloneDX JSON document to generate cryptographic commitments."
+              }
               action={
-                <Link href="/sboms/upload" className={cn(buttonVariants(), "gap-2")}>
-                  <Plus className="size-4" />
-                  Upload First SBOM
-                </Link>
+                !isAdmin ? (
+                  <Link href="/sboms/upload" className={cn(buttonVariants(), "gap-2")}>
+                    <Plus className="size-4" />
+                    Upload First SBOM
+                  </Link>
+                ) : undefined
               }
             />
           )}
@@ -427,16 +443,18 @@ function SbomList() {
                               >
                                 Details
                               </Button>
-                              <Link
-                                href={`/proofs/generate?sbomId=${encodeURIComponent(sbom.upload_id)}`}
-                                className={cn(
-                                  buttonVariants({ variant: "default", size: "sm" }),
-                                  "h-7 text-xs px-2 gap-1"
-                                )}
-                              >
-                                <span>Proof</span>
-                                <ArrowRight className="size-3" />
-                              </Link>
+                              {!isAdmin && (
+                                <Link
+                                  href={`/proofs/generate?sbomId=${encodeURIComponent(sbom.upload_id)}`}
+                                  className={cn(
+                                    buttonVariants({ variant: "default", size: "sm" }),
+                                    "h-7 text-xs px-2 gap-1"
+                                  )}
+                                >
+                                  <span>Proof</span>
+                                  <ArrowRight className="size-3" />
+                                </Link>
+                              )}
                             </div>
                           </TableCell>
                         </TableRow>
@@ -616,13 +634,15 @@ function SbomList() {
                 <Button variant="outline" size="sm" onClick={() => setSelectedSbom(null)}>
                   Close
                 </Button>
-                <Link
-                  href={`/proofs/generate?sbomId=${encodeURIComponent(selectedSbom.upload_id)}`}
-                  className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}
-                >
-                  <span>Generate ZK Proof</span>
-                  <ArrowRight className="size-3.5" />
-                </Link>
+                {!isAdmin && (
+                  <Link
+                    href={`/proofs/generate?sbomId=${encodeURIComponent(selectedSbom.upload_id)}`}
+                    className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}
+                  >
+                    <span>Generate ZK Proof</span>
+                    <ArrowRight className="size-3.5" />
+                  </Link>
+                )}
               </div>
             </CardContent>
           </Card>

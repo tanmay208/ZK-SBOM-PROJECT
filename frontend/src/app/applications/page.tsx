@@ -74,8 +74,8 @@ function ApplicationManagement() {
     refetch,
     isFetching,
   } = useQuery({
-    queryKey: ["applications"],
-    queryFn: () => applicationService.list({ include_archived: true }),
+    queryKey: ["applications", isAdmin],
+    queryFn: () => applicationService.list({ include_archived: true, all_tenants: isAdmin }),
   });
 
   const createMutation = useMutation({
@@ -195,8 +195,12 @@ function ApplicationManagement() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Application Management"
-        description="Register and govern software supply-chain applications authorized to receive SBOM commitments."
+        title={isAdmin ? "Platform Applications" : "Application Management"}
+        description={
+          isAdmin
+            ? "Inspect and govern software applications registered across all platform vendors."
+            : "Register and govern software supply-chain applications authorized to receive SBOM commitments."
+        }
         badge={
           <Badge variant="outline" className="font-mono text-xs text-primary border-primary/30">
             {metrics.total} Registered
@@ -214,17 +218,19 @@ function ApplicationManagement() {
               <RotateCw className={cn("size-3.5", (isLoading || isFetching) && "animate-spin")} />
               <span>Refresh</span>
             </Button>
-            <Button
-              size="sm"
-              onClick={() => {
-                setVendor(user?.username || "");
-                setIsCreateModalOpen(true);
-              }}
-              className="gap-1.5"
-            >
-              <Plus className="size-4" />
-              <span>Register Application</span>
-            </Button>
+            {!isAdmin && (
+              <Button
+                size="sm"
+                onClick={() => {
+                  setVendor(user?.username || "");
+                  setIsCreateModalOpen(true);
+                }}
+                className="gap-1.5"
+              >
+                <Plus className="size-4" />
+                <span>Register Application</span>
+              </Button>
+            )}
           </div>
         }
       />
@@ -452,16 +458,18 @@ function ApplicationManagement() {
                         <div className="flex items-center justify-end gap-1.5">
                           {app.is_active ? (
                             <>
-                              <Link
-                                href={`/sboms/upload`}
-                                className={cn(
-                                  buttonVariants({ variant: "ghost", size: "sm" }),
-                                  "h-7 text-xs px-2 gap-1"
-                                )}
-                              >
-                                <FileUp className="size-3 text-primary" />
-                                <span>Upload SBOM</span>
-                              </Link>
+                              {!isAdmin && (
+                                <Link
+                                  href={`/sboms/upload`}
+                                  className={cn(
+                                    buttonVariants({ variant: "ghost", size: "sm" }),
+                                    "h-7 text-xs px-2 gap-1"
+                                  )}
+                                >
+                                  <FileUp className="size-3 text-primary" />
+                                  <span>Upload SBOM</span>
+                                </Link>
+                              )}
                               <Button
                                 variant="outline"
                                 size="sm"

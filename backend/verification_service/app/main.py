@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from shared.app_factory import create_app  # noqa: E402
 from verification_service.app.api.routes.verification_routes import router as verification_router  # noqa: E402
 from shared.api.auth_routes import router as auth_router  # noqa: E402
-from shared.api.metrics_routes import router as metrics_router  # noqa: E402
+from shared.api.metrics_routes import router as metrics_router, admin_metrics_router  # noqa: E402
 from policy_service.app.api.routes.policy_routes import router as policy_router  # noqa: E402
 from sbom_service.app.api.routes.sbom_routes import router as sbom_router  # noqa: E402
 from sbom_service.app.api.routes.application_routes import router as application_router  # noqa: E402
@@ -40,6 +40,7 @@ app.include_router(verification_router)
 app.include_router(auth_router)
 app.include_router(admin_user_router)
 app.include_router(metrics_router)
+app.include_router(admin_metrics_router)
 app.include_router(policy_router)
 
 # Unified platform routes for single-port frontend development
